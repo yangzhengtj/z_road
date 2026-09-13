@@ -27,3 +27,7 @@ saves/
 .idea/
 .vscode/
 *.swp
+
+# ===== Office/WPS 打开文件时的临时锁文件 =====
+.~*
+~$*
