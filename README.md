@@ -14,7 +14,7 @@
 - **规则核心**：纯 Python，仅使用 MicroPython 兼容子集（零第三方依赖、不做 I/O），数据驱动——卡牌、骰子、规则常量全部 JSON 化。
 - **Mac 前端**：CPython + Rich（界面复杂度上升后再评估 Textual）。
 - **设备前端**：MicroPython（阶段 2）。
-- **测试**：无头前端 + pytest 规则回归（当前 60 项全部通过）。
+- **测试**：无头前端 + pytest 规则回归（当前 83 项全部通过）。
 
 ## 目录结构
 
@@ -50,15 +50,18 @@ python3 tools/md_to_json.py
 # 运行测试
 python3 -m pytest
 
-# 以可编辑方式安装（阶段 1 提供启动入口后使用）
-pip install -e .
+# 安装并启动游戏（可编辑安装，注册 zroad 命令）
+pip install -e ".[desktop]"
+zroad            # 或：python -m zroad
 ```
+
+存档默认写在仓库根 `saves/`（已忽略入库），可用环境变量 `ZROAD_SAVE_DIR` 改位置。
 
 ## 文档索引
 
 - `docs/开发任务规划.md`：**主文档**，含规则口径、分层架构、MicroPython 可移植规范、任务分解与版本记录，每次开发完成后更新。
 - `data/README.md`：数据层结构与再生成说明。
-- `docs/玩家使用指南.md`：首个可玩版本完成后补写。
+- `docs/玩家使用指南.md`：安装、启动、操作与存档说明（v0.6 起）。
 
 ## 资料来源与声明
 
