@@ -1,0 +1,6 @@
+# 运行期零第三方依赖；以下仅为开发期工具
+# Mac 前端
+rich>=13.0
+# 测试
+pytest>=8.0
+# 注：内容源表为 Markdown（参考资料/*.md），转换脚本 tools/md_to_json.py 仅用标准库。
