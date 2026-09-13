@@ -38,6 +38,16 @@ FACE_DEATH = "死亡"
 EVENT_NONE = "无"
 EVENT_PREFIX = "事件效果："
 
+# ---- 六种自设特殊道具（名称与卡牌事件文本完全一致） ----
+ITEM_SNIPER = "狙击枪"
+ITEM_MAP = "地图"
+ITEM_BUS = "校车"
+ITEM_GAS = "毒气"
+ITEM_WOUND = "受伤"
+ITEM_SURVIVOR = "幸存者"
+SPECIAL_ITEMS = (ITEM_SNIPER, ITEM_MAP, ITEM_BUS,
+                 ITEM_GAS, ITEM_WOUND, ITEM_SURVIVOR)
+
 # ---- 对局模式 ----
 MODE_SOLO = "solo"   # 单人 SOLO（阶段 1）
 MODE_DUEL = "duel"   # 两人热座（阶段 3）

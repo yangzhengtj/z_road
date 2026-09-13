@@ -110,8 +110,25 @@ class PlayerState:
         self.resources = resources if resources is not None else Resources()
         # 已赢得（成功通过）的卡牌 id 列表，终局计分用
         self.won_card_ids = []
-        # 持有的特殊道具名（6 种自设道具，M3 起使用，M2 先留空容器）
+        # 持有的特殊道具名（6 种自设道具，可重复持有，如两张地图）
         self.special_items = []
+        # 事件直接给的额外分数（如 II-4 地图 +6），终局与卡牌得分相加
+        self.bonus_score = 0
+
+    def has_item(self, item_name):
+        """是否持有某特殊道具。"""
+        return item_name in self.special_items
+
+    def gain_item(self, item_name):
+        """获得特殊道具（允许重复获得）。"""
+        self.special_items.append(item_name)
+
+    def consume_item(self, item_name):
+        """消耗（弃掉）一个指定道具；返回是否成功消耗。"""
+        if item_name in self.special_items:
+            self.special_items.remove(item_name)
+            return True
+        return False
 
     def lose_survivors(self, count):
         """损失 count 名幸存者，返回实际损失数（不会低于 0）。"""
@@ -127,7 +144,8 @@ class PlayerState:
         return {"name": self.name, "survivors": self.survivors,
                 "resources": self.resources.to_dict(),
                 "won_card_ids": list(self.won_card_ids),
-                "special_items": list(self.special_items)}
+                "special_items": list(self.special_items),
+                "bonus_score": self.bonus_score}
 
     @classmethod
     def from_dict(cls, data):
@@ -136,6 +154,7 @@ class PlayerState:
                      name=data.get("name", "玩家"))
         player.won_card_ids = list(data.get("won_card_ids", []))
         player.special_items = list(data.get("special_items", []))
+        player.bonus_score = data.get("bonus_score", 0)
         return player
 
 
@@ -203,10 +222,29 @@ class GameState:
         # 所选路径进入遭遇阶段的两张卡，以及处理到第几张
         self.encounter_queue = []
         self.encounter_index = 0
+        # 当前待结算战斗（M3 建立结构，M4 实现战斗过程）；无战斗时为 None
+        self.pending_combat = None
+        # 累计统计（M3 起记账，M6 做局后统计展示）
+        self.stats = self._empty_stats()
         # 随机源状态（SeededRng.get_state() 的结果），保证读档后随机序列无缝衔接
         self.rng_state = None
         # 逐轮流水（每轮选了哪条路、拿到/弃掉哪些牌），供局后统计与回看
         self.round_log = []
+
+    @staticmethod
+    def _empty_stats():
+        """新建一份零值统计（键名固定，便于序列化与局后汇总）。"""
+        return {
+            "zombies_killed": 0,        # 累计击杀丧尸
+            "survivors_lost": 0,        # 累计损失幸存者
+            "combats": 0,               # 发生战斗的场次
+            "fled": 0,                  # 逃跑次数
+            "resources_gained": {"ammo": 0, "gas": 0, "meds": 0},
+            "resources_spent": {"ammo": 0, "gas": 0, "meds": 0},
+            # 两种骰子各面值出现次数（事件掷骰与 M4 战斗掷骰都记）
+            "dice_faces": {"normal": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0},
+                           "enhanced": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}},
+        }
 
     # --- 序列化（存档的基础；要求输出是纯 JSON 类型） ---
     def to_dict(self):
@@ -222,6 +260,8 @@ class GameState:
             "current_options": [opt.to_dict() for opt in self.current_options],
             "encounter_queue": list(self.encounter_queue),
             "encounter_index": self.encounter_index,
+            "pending_combat": self.pending_combat,
+            "stats": self.stats,
             "rng_state": self.rng_state,
             "round_log": list(self.round_log),
         }
@@ -239,6 +279,8 @@ class GameState:
         state.current_options = [PathOption.from_dict(d) for d in data.get("current_options", [])]
         state.encounter_queue = list(data.get("encounter_queue", []))
         state.encounter_index = data.get("encounter_index", 0)
+        state.pending_combat = data.get("pending_combat")
+        state.stats = data.get("stats") or GameState._empty_stats()
         state.rng_state = data.get("rng_state")
         state.round_log = list(data.get("round_log", []))
         return state

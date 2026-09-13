@@ -20,6 +20,7 @@ from .constants import (RESOURCE_KEYS, PHASE_INIT, PHASE_PLANNING,
 from .rng import SeededRng
 from .model import GameState, PlayerState, Resources, EngineError
 from . import deck as deck_mod
+from . import effects as effects_mod
 
 
 class Engine:
@@ -226,6 +227,162 @@ class Engine:
             self.state.phase = PHASE_ROUND_END
             return None
         return self.state.encounter_queue[self.state.encounter_index]
+
+    # ---------- M3：卡牌结算（拾荒 → 事件 → 战斗挂起） ----------
+    def _current_card(self):
+        """取当前遭遇卡牌的完整数据（catalog 查表）。"""
+        card_id = self.current_encounter_card()
+        if card_id is None:
+            raise EngineError("当前没有待结算的遭遇卡")
+        return card_id, self.catalog[card_id]
+
+    def peek_card_decision(self):
+        """查看当前卡的立即效果是否需要玩家先决策（不需要返回 None）。
+
+        前端循环用法：先 peek，有决策就询问玩家，再把 decision 传给
+        begin_card_resolution。
+        """
+        _, card = self._current_card()
+        spec = effects_mod.parse_effect(card)
+        if spec["timing"] == effects_mod.TIMING_IMMEDIATE:
+            return effects_mod.decision_needed(spec, self.state.player)
+        return None
+
+    def begin_card_resolution(self, decision=None):
+        """结算当前遭遇卡的“非战斗部分”：拾荒 + 立即事件。
+
+        返回 outcome：
+            - 无战斗的卡：直接赢得并推进队列，outcome["combat"] 为 None；
+            - 战斗牌：outcome["combat"] 为挂起的战斗信息 dict，等待 M4 战斗模块
+              （M3 测试期可调用 resolve_combat_result 给出结果占位）。
+        """
+        if self.state.phase != PHASE_ENCOUNTER:
+            raise EngineError("当前不在遭遇阶段（phase=%s）" % self.state.phase)
+        card_id, card = self._current_card()
+        player = self.state.player
+        outcome = {"card_id": card_id, "scavenge": None,
+                   "effect": None, "combat": None}
+
+        # ① 拾荒：获得卡面全部资源（先结算，事件可能紧接着扣资源）
+        scav = card["scavenge"]
+        gain = {k: scav.get(k, 0) for k in RESOURCE_KEYS if scav.get(k, 0) > 0}
+        if gain:
+            player.resources.apply_delta(gain)
+            for key, amount in gain.items():
+                self.state.stats["resources_gained"][key] += amount
+        outcome["scavenge"] = gain
+
+        # ② 事件：解析效果指令
+        spec = effects_mod.parse_effect(card)
+
+        # ③ 战斗修正类效果：不立即结算，随战斗挂起（III-17 的道具全屏秒杀除外）
+        if spec["timing"] == effects_mod.TIMING_COMBAT:
+            if (spec["kind"] == effects_mod.KIND_MOD_SURVIVOR_NUKE
+                    and player.has_item(spec["item"])):
+                # 持有“幸存者”：本场丧尸全部死亡、跳过战斗并消耗道具
+                player.consume_item(spec["item"])
+                killed = card["zombies"]["count"]
+                self.state.stats["zombies_killed"] += killed
+                self.state.stats["combats"] += 1
+                outcome["effect"] = {"logs": ["伙伴引爆炸药，丧尸全灭，跳过战斗"],
+                                     "item_consumed": spec["item"]}
+                self._win_card(card_id)
+                self._advance_after_resolution(outcome)
+                return outcome
+            outcome["combat"] = self._build_pending_combat(card, [spec])
+            self._sync_rng()
+            return outcome
+
+        # 立即效果结算
+        effect_result = effects_mod.resolve_immediate(
+            spec, player, self.rng, self.state.stats, decision)
+        outcome["effect"] = effect_result
+
+        # ④ 是否还有战斗：有丧尸则挂起战斗，且【不推进队列】（等战斗收口）；
+        #    无战斗则直接赢得本卡并推进到下一张
+        if card["zombies"]["count"] > 0:
+            outcome["combat"] = self._build_pending_combat(card, [])
+            self._check_eliminated()
+            self._sync_rng()
+            return outcome
+        self._win_card(card_id)
+        self._check_eliminated()
+        self._advance_after_resolution(outcome)
+        self._sync_rng()
+        return outcome
+
+    def _build_pending_combat(self, card, mod_specs):
+        """把一张战斗牌整理成挂起战斗信息（M4 战斗模块据此开打）。"""
+        pending = {
+            "card_id": card["id"],
+            "zombies_count": card["zombies"]["count"],
+            "zombies_level": card["zombies"]["level"],
+            "mods": [spec["kind"] for spec in mod_specs],
+            "ranged_bite_adds_zombie": False,  # 远程掷出咬伤则丧尸+1
+            "no_meds": False,                  # 本场禁止用药剂
+            "no_flee": False,                  # 本场禁止逃跑
+        }
+        for spec in mod_specs:
+            if spec["kind"] == effects_mod.KIND_MOD_RANGED_BITE_ADDS:
+                pending["ranged_bite_adds_zombie"] = True
+            elif spec["kind"] == effects_mod.KIND_MOD_NO_MEDS:
+                pending["no_meds"] = True
+            elif spec["kind"] == effects_mod.KIND_MOD_NO_FLEE:
+                pending["no_flee"] = True
+        self.state.pending_combat = pending
+        self.state.stats["combats"] += 1
+        return pending
+
+    def resolve_combat_result(self, won, survivors_lost=0, fled=False,
+                              zombies_killed=0):
+        """M4 之前的战斗收口：由战斗流程（M3 测试为脚本占位）给出结果。
+
+        参数:
+            won: 是否打赢（赢得卡牌得分）；
+            fled: 是否逃跑（逃跑则卡牌进弃牌堆、不得分）；
+            survivors_lost: 本场损失的幸存者数；
+            zombies_killed: 本场击杀丧尸数。
+        """
+        pending = self.state.pending_combat
+        if pending is None:
+            raise EngineError("当前没有挂起的战斗")
+        card_id = pending["card_id"]
+        player = self.state.player
+
+        if survivors_lost:
+            actual = player.lose_survivors(survivors_lost)
+            self.state.stats["survivors_lost"] += actual
+        if zombies_killed:
+            self.state.stats["zombies_killed"] += zombies_killed
+
+        outcome = {"card_id": card_id, "survivors_lost": survivors_lost}
+        if fled:
+            self.state.discard_ids.append(card_id)
+            self.state.stats["fled"] += 1
+        elif won:
+            self._win_card(card_id)
+        self.state.pending_combat = None
+        self._check_eliminated()
+        self._advance_after_resolution(outcome)
+        self._sync_rng()
+        return outcome
+
+    def _win_card(self, card_id):
+        """赢得（成功通过）一张卡：计入 won_card_ids。"""
+        self.state.player.won_card_ids.append(card_id)
+
+    def _check_eliminated(self):
+        """幸存者归零：对局立即失败结束。"""
+        if self.state.player.is_eliminated():
+            self.state.phase = PHASE_FINISHED
+
+    def _advance_after_resolution(self, outcome):
+        """一张卡处理完后推进遭遇队列（两张都完则进入轮末）。"""
+        if self.state.phase == PHASE_FINISHED:
+            return
+        next_id = self.consume_encounter_card()
+        outcome["next_card"] = next_id
+        outcome["phase_after"] = self.state.phase
 
     def close_round(self):
         """轮末收尾：进入下一轮 planning；若已打完 8 轮则进入 finished。
