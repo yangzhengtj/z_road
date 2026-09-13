@@ -1,0 +1,29 @@
+# ===== macOS 系统文件 =====
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+
+# ===== Python =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+build/
+dist/
+
+# ===== MicroPython 构建产物（阶段 2 使用） =====
+*.mpy
+
+# ===== 运行期存档与本地统计（不入库） =====
+saves/
+*.save
+
+# ===== 编辑器 / IDE =====
+.idea/
+.vscode/
+*.swp
