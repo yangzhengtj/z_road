@@ -234,6 +234,21 @@ def _force_encounter(engine, card_id):
     engine.state.encounter_index = 0
 
 
+def auto_play_combat(engine, use_meds=True):
+    """测试辅助：用近战把当前挂起的战斗打完（默认在所有可用机会上花药剂）。"""
+    priority = {"bite": 0, "extra": 1, "wait": 2}
+    while engine.state.pending_combat is not None:
+        view = engine.combat_roll_melee()
+        usable = [o for o in view["opportunities"]
+                  if use_meds and o["available"]]
+        usable.sort(key=lambda o: priority[o["opportunity"]])
+        idxs = [o["idx"] for o in usable[:engine.state.player.resources.meds]]
+        outcome = engine.combat_resolve_melee(idxs)
+        if outcome["result"] in ("won", "lost"):
+            return outcome
+    return None
+
+
 def test_engine_scavenge_noncombat(cards, config):
     engine = Engine.new_solo(cards, config, seed=1)
     _force_encounter(engine, "I-3")  # 拾荒 +2 汽油、无事件、无战斗
@@ -251,8 +266,9 @@ def test_engine_combat_card_pending(cards, config):
     outcome = engine.begin_card_resolution()
     assert outcome["combat"]["zombies_count"] == 4
     assert engine.state.pending_combat is not None
-    # M4 前用结果占位：打赢
-    engine.resolve_combat_result(won=True, zombies_killed=4)
+    # 通过真实近战打赢
+    result = auto_play_combat(engine)
+    assert result["result"] == "won"
     assert "I-13" in engine.state.player.won_card_ids
     assert engine.state.stats["zombies_killed"] == 4
 
@@ -262,12 +278,17 @@ def test_engine_combat_mods_attached(cards, config):
     _force_encounter(engine, "III-19")  # 不能逃跑
     outcome = engine.begin_card_resolution()
     assert outcome["combat"]["no_flee"] is True
-    engine.resolve_combat_result(won=True, zombies_killed=6)
+    action_kinds = [a["action"] for a in engine.combat_actions()]
+    assert "flee" not in action_kinds
+    auto_play_combat(engine)
 
     engine2 = Engine.new_solo(cards, config, seed=1)
     _force_encounter(engine2, "III-10")  # 不能用药剂
     outcome2 = engine2.begin_card_resolution()
     assert outcome2["combat"]["no_meds"] is True
+    view = engine2.combat_roll_melee()
+    assert view["no_meds"] is True
+    assert all(not o["available"] for o in view["opportunities"])
 
 
 def test_engine_survivor_nuke_skips_combat(cards, config):
@@ -309,9 +330,9 @@ def test_full_game_smoke_with_decisions(cards, config):
         while engine.state.phase == PHASE_ENCOUNTER:
             outcome = engine.begin_card_resolution(auto_decision())
             if outcome.get("combat"):
-                combat = outcome["combat"]
-                engine.resolve_combat_result(
-                    won=True, zombies_killed=combat["zombies_count"])
+                result = auto_play_combat(engine)
+                if result["result"] == "lost":
+                    break
         assert engine.state.phase == PHASE_ROUND_END
         engine.close_round()
     assert rounds == 8

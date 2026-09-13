@@ -34,6 +34,14 @@ FACE_EXTRA_KILL = "额外击杀"
 FACE_BITE = "咬伤"
 FACE_DEATH = "死亡"
 
+# ---- 骰面 → 名称映射（与 data/dice.json 严格一致，由测试守护） ----
+# 普通骰（黑）：1 空白 / 2 伺机而动 / 3、4 击杀 / 5 额外击杀 / 6 咬伤
+NORMAL_FACE_NAMES = {1: FACE_BLANK, 2: FACE_HOLD, 3: FACE_KILL,
+                     4: FACE_KILL, 5: FACE_EXTRA_KILL, 6: FACE_BITE}
+# 强化骰（红，屍群骰）：1 咬伤 / 2 伺机而动 / 3、4 击杀 / 5 额外击杀 / 6 死亡
+ENHANCED_FACE_NAMES = {1: FACE_BITE, 2: FACE_HOLD, 3: FACE_KILL,
+                       4: FACE_KILL, 5: FACE_EXTRA_KILL, 6: FACE_DEATH}
+
 # ---- 事件原文中的固定前缀 ----
 EVENT_NONE = "无"
 EVENT_PREFIX = "事件效果："

@@ -21,6 +21,8 @@ from .rng import SeededRng
 from .model import GameState, PlayerState, Resources, EngineError
 from . import deck as deck_mod
 from . import effects as effects_mod
+from . import combat as combat_mod
+from .combat import Combat
 
 
 class Engine:
@@ -42,6 +44,8 @@ class Engine:
         self.ui = ui
         self.setup_cfg = config["setup"]
         self.solo_cfg = config["solo_paths"]
+        # 当前战斗控制器（Combat 实例）；不在战斗中为 None，读档后惰性重建
+        self._combat = None
 
     # ---------- 建局 / 读档 ----------
     @classmethod
@@ -289,7 +293,12 @@ class Engine:
                 self._win_card(card_id)
                 self._advance_after_resolution(outcome)
                 return outcome
-            outcome["combat"] = self._build_pending_combat(card, [spec])
+            # 立即效果（若有）已把人清零则不再开打，直接结束对局
+            if player.is_eliminated():
+                self.state.phase = PHASE_FINISHED
+                self._sync_rng()
+                return outcome
+            outcome["combat"] = self._build_pending_combat(card, [spec["kind"]])
             self._sync_rng()
             return outcome
 
@@ -299,10 +308,13 @@ class Engine:
         outcome["effect"] = effect_result
 
         # ④ 是否还有战斗：有丧尸则挂起战斗，且【不推进队列】（等战斗收口）；
-        #    无战斗则直接赢得本卡并推进到下一张
+        #    事件已导致全灭则不再开打、也不赢得本卡；无战斗则赢得并推进
         if card["zombies"]["count"] > 0:
+            if player.is_eliminated():
+                self.state.phase = PHASE_FINISHED
+                self._sync_rng()
+                return outcome
             outcome["combat"] = self._build_pending_combat(card, [])
-            self._check_eliminated()
             self._sync_rng()
             return outcome
         self._win_card(card_id)
@@ -311,61 +323,76 @@ class Engine:
         self._sync_rng()
         return outcome
 
-    def _build_pending_combat(self, card, mod_specs):
-        """把一张战斗牌整理成挂起战斗信息（M4 战斗模块据此开打）。"""
-        pending = {
-            "card_id": card["id"],
-            "zombies_count": card["zombies"]["count"],
-            "zombies_level": card["zombies"]["level"],
-            "mods": [spec["kind"] for spec in mod_specs],
-            "ranged_bite_adds_zombie": False,  # 远程掷出咬伤则丧尸+1
-            "no_meds": False,                  # 本场禁止用药剂
-            "no_flee": False,                  # 本场禁止逃跑
-        }
-        for spec in mod_specs:
-            if spec["kind"] == effects_mod.KIND_MOD_RANGED_BITE_ADDS:
-                pending["ranged_bite_adds_zombie"] = True
-            elif spec["kind"] == effects_mod.KIND_MOD_NO_MEDS:
-                pending["no_meds"] = True
-            elif spec["kind"] == effects_mod.KIND_MOD_NO_FLEE:
-                pending["no_flee"] = True
+    def _build_pending_combat(self, card, mod_kinds):
+        """把一张战斗牌整理成挂起战斗状态（combat.new_combat_state），并建控制器。"""
+        pending = combat_mod.new_combat_state(
+            card["id"], card["zombies"]["count"], card["zombies"]["level"],
+            mod_kinds)
         self.state.pending_combat = pending
         self.state.stats["combats"] += 1
+        self._combat = Combat(self.state.player, pending, self.rng,
+                              self.state.stats, self.config["combat"])
         return pending
 
-    def resolve_combat_result(self, won, survivors_lost=0, fled=False,
-                              zombies_killed=0):
-        """M4 之前的战斗收口：由战斗流程（M3 测试为脚本占位）给出结果。
-
-        参数:
-            won: 是否打赢（赢得卡牌得分）；
-            fled: 是否逃跑（逃跑则卡牌进弃牌堆、不得分）；
-            survivors_lost: 本场损失的幸存者数；
-            zombies_killed: 本场击杀丧尸数。
-        """
-        pending = self.state.pending_combat
-        if pending is None:
+    # ---------- M4：战斗驱动（前端按顺序调用） ----------
+    def combat(self):
+        """获取当前战斗控制器；若为读档后首次使用则按 pending_combat 惰性重建。"""
+        if self.state.pending_combat is None:
             raise EngineError("当前没有挂起的战斗")
-        card_id = pending["card_id"]
-        player = self.state.player
+        if self._combat is None:
+            self._combat = Combat(self.state.player, self.state.pending_combat,
+                                  self.rng, self.state.stats,
+                                  self.config["combat"])
+        return self._combat
 
-        if survivors_lost:
-            actual = player.lose_survivors(survivors_lost)
-            self.state.stats["survivors_lost"] += actual
-        if zombies_killed:
-            self.state.stats["zombies_killed"] += zombies_killed
+    def combat_actions(self):
+        """近战前可选行动（远程/逃跑/近战）。"""
+        return self.combat().available_actions()
 
-        outcome = {"card_id": card_id, "survivors_lost": survivors_lost}
-        if fled:
-            self.state.discard_ids.append(card_id)
-            self.state.stats["fled"] += 1
-        elif won:
-            self._win_card(card_id)
-        self.state.pending_combat = None
-        self._check_eliminated()
-        self._advance_after_resolution(outcome)
+    def combat_ranged(self, burst_count):
+        """远程攻击，返回掷骰结果；若直接清场则自动收口战斗。"""
+        result = self.combat().do_ranged(burst_count)
+        if result.get("result") == combat_mod.RESULT_WON:
+            self._close_combat(combat_mod.RESULT_WON)
+        self._sync_rng()
+        return result
+
+    def combat_flee(self):
+        """逃跑：付汽油、弃牌，收口战斗。"""
+        result = self.combat().do_flee()
+        self._close_combat(combat_mod.RESULT_FLED)
+        self._sync_rng()
+        return result
+
+    def combat_roll_melee(self):
+        """掷出一批近战骰，返回骰面与药剂机会列表（前端询问后再结算）。"""
+        return self.combat().roll_melee()
+
+    def combat_resolve_melee(self, use_meds_indices=None):
+        """按药剂决策结算一批近战骰；ongoing 则继续下一批，胜/负自动收口。"""
+        outcome = self.combat().resolve_melee(use_meds_indices)
+        result = outcome["result"]
+        if result in (combat_mod.RESULT_WON, combat_mod.RESULT_LOST):
+            self._close_combat(result)
         self._sync_rng()
         return outcome
+
+    def _close_combat(self, result):
+        """战斗结束统一收口：赢得卡牌 / 逃跑弃牌 / 全灭失败，并推进遭遇队列。"""
+        pending = self.state.pending_combat
+        card_id = pending["card_id"]
+        outcome = {"card_id": card_id, "combat_result": result}
+        if result == combat_mod.RESULT_WON:
+            self._win_card(card_id)
+        elif result == combat_mod.RESULT_FLED:
+            self.state.discard_ids.append(card_id)
+        # RESULT_LOST：牌既不赢得也不弃，幸存者已归零，直接结束对局
+        self.state.pending_combat = None
+        self._combat = None
+        if result == combat_mod.RESULT_LOST or self.state.player.is_eliminated():
+            self.state.phase = PHASE_FINISHED
+            return
+        self._advance_after_resolution(outcome)
 
     def _win_card(self, card_id):
         """赢得（成功通过）一张卡：计入 won_card_ids。"""
