@@ -1,0 +1,95 @@
+{
+  "schema_version": 1,
+  "note": "本文件存放来自 Hit Z Road 说明书的固定规则常量；卡牌/骰面内容见 cards.json、dice.json。修改规则数值改这里，引擎代码不写死。",
+
+  "resources": {
+    "ammo": "弹药",
+    "gas": "汽油",
+    "meds": "药剂"
+  },
+
+  "setup": {
+    "comment": "牌池60张（16/22/22）；每局每阶段随机剔除 4 张，登场 12/18/18；单人每轮发 6 张，故三阶段分别进行 2/3/3 轮，共 8 轮",
+    "stage_pool_sizes": [16, 22, 22],
+    "remove_per_stage": 4,
+    "active_deck_sizes": [12, 18, 18],
+    "solo_cards_per_round": 6,
+    "paths_per_round_solo": 3,
+    "cards_per_path": 2,
+    "stage_rounds": [2, 3, 3],
+    "total_rounds": 8,
+    "initial_state": {
+      "main_survivors": 1,
+      "followers": 4,
+      "ammo": 4,
+      "gas": 4,
+      "meds": 4
+    }
+  },
+
+  "solo_paths": {
+    "comment": "单人规划阶段三条路径的明暗与奖惩（说明书第 11 页）。up=面朝上可见，down=面朝下未知",
+    "paths": [
+      {"index": 1, "first_card": "down", "second_card": "down", "bonus_any_resources": 2, "cost_any_resources": 0},
+      {"index": 2, "first_card": "up",   "second_card": "down", "bonus_any_resources": 0, "cost_any_resources": 0},
+      {"index": 3, "first_card": "up",   "second_card": "up",   "bonus_any_resources": 0, "cost_any_resources": 2}
+    ],
+    "discard_unselected_paths": true
+  },
+
+  "combat": {
+    "ranged_attack": {
+      "comment": "每场战斗可选一次、且必须先于近战；每支付 1 弹药掷 2 颗普通骰，仅击杀面生效，其余骰面忽略",
+      "optional": true,
+      "once_per_combat": true,
+      "ammo_per_burst": 1,
+      "dice_per_burst": 2,
+      "dice_kind": "normal",
+      "kill_face_names": ["击杀", "额外击杀"]
+    },
+    "flee": {
+      "comment": "近战开始前可逃跑：付 2 汽油，弃掉该牌且不得分",
+      "gas_cost": 2,
+      "forfeit_card_and_score": true
+    },
+    "melee": {
+      "comment": "每名幸存者掷 1 颗骰；屍群按等级把等量普通骰替换为强化骰；总骰数不超过幸存者人数",
+      "dice_per_survivor": 1,
+      "cap_dice_to_survivors": true
+    },
+    "face_costs": {
+      "咬伤": {"meds_to_save": 1, "otherwise_lose_survivors": 1},
+      "死亡": {"immediate_lose_survivors": 1},
+      "伺机而动": {"meds_to_kill": 1, "if_not_pay": "dodge"},
+      "额外击杀": {"base_kill": 1, "optional_meds_for_extra_kill": 1}
+    }
+  },
+
+  "scoring": {
+    "comment": "单人终局：赢得卡牌的得分总和 + 每套(1幸存者+1汽油+1弹药+1药剂)+1 分；随后按总分给评级（说明书第 12 页）",
+    "complete_set": {"survivor": 1, "gas": 1, "ammo": 1, "meds": 1, "points": 1},
+    "ratings": [
+      {"min": 0,  "max": 5,  "label": "神父加百列"},
+      {"min": 6,  "max": 10, "label": "还好"},
+      {"min": 11, "max": 15, "label": "不错"},
+      {"min": 16, "max": 18, "label": "非常好"},
+      {"min": 19, "max": 21, "label": "叫我达瑞"},
+      {"min": 22, "max": null, "label": "幸运儿或天才"}
+    ]
+  },
+
+  "save": {
+    "comment": "存档方案（已确认）：每轮末自动存档 1 个 + 手动存档槽 3 个；整局状态 JSON 序列化",
+    "auto_save_at_round_end": true,
+    "manual_slots": 3
+  },
+
+  "duel": {
+    "comment": "两人热座模式（已定案）：不做竞拍、不做3-4人、不联网",
+    "first_player": "开局双方各掷 D6 比大小，大者先手，平局重掷",
+    "rotate_first_player_each_round": true,
+    "paths_per_round": 3,
+    "bottom_path_extra_cost": 2,
+    "hotseat_hide_on_switch": true
+  }
+}
