@@ -22,6 +22,7 @@ from .model import EngineError
 # ---- 效果类型常量（同样不用 enum） ----
 KIND_NONE = "none"                       # 无事件
 KIND_GAIN_SURVIVORS = "gain_survivors"   # 队伍人数 +N
+KIND_LOSE_SURVIVORS = "lose_survivors"   # 队伍人数 -N（如 II-6 毒蛇）
 KIND_GAIN_ITEM = "gain_item"             # 获得特殊道具
 KIND_LOSE_RESOURCE_CHOICE = "lose_resource_choice"  # 三选一资源 -N
 KIND_ITEM_MAP_SCORE = "item_map_score"   # 有地图：+分并消耗
@@ -93,8 +94,6 @@ def parse_effect(card):
             # 形如“获得特殊道具：狙击枪”（冒号后直接是名字）
             item = text.split("：", 1)[-1].strip()
         return _spec(KIND_GAIN_ITEM, TIMING_IMMEDIATE, item=item)
-    if "队伍人数+1" in text:
-        return _spec(KIND_GAIN_SURVIVORS, TIMING_IMMEDIATE, amount=1)
 
     # 3) 六种道具的条件触发句
     if "特殊道具（地图）" in text:
@@ -136,6 +135,14 @@ def parse_effect(card):
     if "投一个普通骰子" in text and "不是3、4、5" in text:
         return _spec(KIND_RESCUE_SHOT, TIMING_IMMEDIATE,
                      dice=DICE_NORMAL, save_faces=(3, 4, 5), lose=1)
+
+    # 8) 队伍人数 ±N（放在付汽油等句式之后，避免误吞“不付汽油则队伍-1”）
+    match = re.search(r"队伍人数\s*([+-])\s*(\d+)", text)
+    if match:
+        amount = int(match.group(2))
+        if match.group(1) == "+":
+            return _spec(KIND_GAIN_SURVIVORS, TIMING_IMMEDIATE, amount=amount)
+        return _spec(KIND_LOSE_SURVIVORS, TIMING_IMMEDIATE, amount=amount)
 
     # 8) 兜底：未识别文本直接报错，绝不静默忽略
     raise EngineError("无法解析卡牌事件：%s｜文本：%s" % (card.get("id"), text))
@@ -218,6 +225,11 @@ def resolve_immediate(spec, player, rng, stats=None, decision=None):
         player.survivors += spec["amount"]
         result["survivors_delta"] = spec["amount"]
         result["logs"].append("队伍人数 +%d" % spec["amount"])
+        return result
+
+    if kind == KIND_LOSE_SURVIVORS:
+        actual = _lose_players(player, spec["amount"], result, stats)
+        result["logs"].append("队伍人数 -%d" % actual)
         return result
 
     if kind == KIND_GAIN_ITEM:

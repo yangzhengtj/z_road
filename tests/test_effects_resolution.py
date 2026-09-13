@@ -45,7 +45,7 @@ EXPECTED_KIND = {
     # 阶段 II
     "II-1": fx.KIND_NONE, "II-2": fx.KIND_NONE, "II-3": fx.KIND_NONE,
     "II-4": fx.KIND_ITEM_MAP_SCORE, "II-5": fx.KIND_ITEM_BUS_NOTE,
-    "II-6": fx.KIND_NONE,
+    "II-6": fx.KIND_LOSE_SURVIVORS,
     "II-7": fx.KIND_PAY_GAS_OR_LOSE, "II-8": fx.KIND_LOSE_RESOURCE_CHOICE,
     "II-9": fx.KIND_RUSSIAN_ROULETTE, "II-10": fx.KIND_GAIN_SURVIVORS,
     "II-11": fx.KIND_ITEM_SNIPER_PASS, "II-12": fx.KIND_PAY_GAS_OR_LOSE,
@@ -110,6 +110,15 @@ def test_gain_survivors():
     spec = {"kind": fx.KIND_GAIN_SURVIVORS, "timing": fx.TIMING_IMMEDIATE, "amount": 1}
     fx.resolve_immediate(spec, p, SeededRng(1))
     assert p.survivors == 6
+
+
+def test_lose_survivors():
+    p = _player(survivors=5)
+    stats = {"survivors_lost": 0}
+    spec = {"kind": fx.KIND_LOSE_SURVIVORS, "timing": fx.TIMING_IMMEDIATE, "amount": 1}
+    result = fx.resolve_immediate(spec, p, SeededRng(1), stats)
+    assert p.survivors == 4 and result["survivors_delta"] == -1
+    assert stats["survivors_lost"] == 1
 
 
 def test_gain_item():

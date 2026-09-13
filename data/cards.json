@@ -366,7 +366,7 @@
       "gas": 1,
       "meds": 0
     },
-    "event_raw": "无",
+    "event_raw": "事件效果：队伍人数-1",
     "zombies": {
       "count": 0,
       "level": 0
