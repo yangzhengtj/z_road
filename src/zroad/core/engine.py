@@ -22,6 +22,7 @@ from .model import GameState, PlayerState, Resources, EngineError
 from . import deck as deck_mod
 from . import effects as effects_mod
 from . import combat as combat_mod
+from . import scoring as scoring_mod
 from .combat import Combat
 
 
@@ -432,6 +433,11 @@ class Engine:
 
     def is_finished(self):
         return self.state.phase == PHASE_FINISHED
+
+    def final_report(self):
+        """终局分数明细与评级（仅在 finished 时有意义）。"""
+        return scoring_mod.final_report(self.state.player, self.catalog,
+                                        self.config["scoring"])
 
     # ---------- 内部 ----------
     def _sync_rng(self):
