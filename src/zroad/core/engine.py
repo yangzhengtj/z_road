@@ -282,14 +282,14 @@ class Engine:
 
         # ③ 战斗修正类效果：不立即结算，随战斗挂起（III-17 的道具全屏秒杀除外）
         if spec["timing"] == effects_mod.TIMING_COMBAT:
-            if (spec["kind"] == effects_mod.KIND_MOD_SURVIVOR_NUKE
+            if (spec["kind"] == effects_mod.KIND_MOD_ZEALOT_NUKE
                     and player.has_item(spec["item"])):
-                # 持有“幸存者”：本场丧尸全部死亡、跳过战斗并消耗道具
+                # 持有“狂热者”：本场丧尸全部死亡、跳过战斗并消耗道具
                 player.consume_item(spec["item"])
                 killed = card["zombies"]["count"]
                 self.state.stats["zombies_killed"] += killed
                 self.state.stats["combats"] += 1
-                outcome["effect"] = {"logs": ["伙伴引爆炸药，丧尸全灭，跳过战斗"],
+                outcome["effect"] = {"logs": ["狂热者引爆炸药，丧尸全灭，跳过战斗"],
                                      "item_consumed": spec["item"]}
                 self._win_card(card_id)
                 self._advance_after_resolution(outcome)
@@ -438,6 +438,15 @@ class Engine:
         """终局分数明细与评级（仅在 finished 时有意义）。"""
         return scoring_mod.final_report(self.state.player, self.catalog,
                                         self.config["scoring"])
+
+    def current_score(self):
+        """对局进行中的累计得分（已赢卡牌分 + 事件额外分；套装分终局才计）。"""
+        card_score = 0
+        for card_id in self.state.player.won_card_ids:
+            card = self.catalog.get(card_id)
+            if card is not None:
+                card_score += card.get("score", 0)
+        return card_score + self.state.player.bonus_score
 
     # ---------- 内部 ----------
     def _sync_rng(self):

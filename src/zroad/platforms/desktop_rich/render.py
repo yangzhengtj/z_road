@@ -20,8 +20,8 @@ def resources_text(player):
     return "弹药 %d ｜ 汽油 %d ｜ 药剂 %d" % (r.ammo, r.gas, r.meds)
 
 
-def status_panel(player, round_no, stage, total_rounds=8):
-    """顶部状态面板：轮次、人数、资源、道具。"""
+def status_panel(player, round_no, stage, total_rounds=8, score=0):
+    """顶部状态面板：轮次、人数、资源、道具、当前累计得分。"""
     title = "第 %d/%d 轮 · %s" % (round_no, total_rounds,
                                   STAGE_NAMES.get(stage, str(stage)))
     items = "、".join(player.special_items) if player.special_items else "无"
@@ -30,6 +30,7 @@ def status_panel(player, round_no, stage, total_rounds=8):
     body.append("%d 人" % player.survivors, style="bold green")
     body.append("    %s" % resources_text(player))
     body.append("\n特殊道具：%s" % items)
+    body.append("\n得分：%d" % score, style="bold yellow")
     return Panel(body, title=title, border_style="cyan")
 
 
@@ -49,7 +50,9 @@ def card_panel(card, title=None):
     table.add_column()
     table.add_row("场景", card["scene"])
     table.add_row("拾荒", _scavenge_text(card))
-    event = card["event_raw"] if card["event_raw"] != "无" else "—"
+    # 遭遇界面展示玩家面事件（event_text）；开发者结算说明不外露
+    event = card.get("event_text", "无")
+    event = event if event != "无" else "—"
     table.add_row("事件", event)
     z = card["zombies"]
     if z["count"] > 0:
@@ -81,14 +84,36 @@ def path_options_table(options, catalog, affordable_flags=None):
                 cells.append(Text("？？（背面）", style="dim"))
             else:
                 card = catalog[card_id]
-                z = card["zombies"]["count"]
-                tag = " ⚔%d" % z if z else ""
-                cells.append("%s%s" % (card_id, tag))
+                # 明牌不显示编号，只显示“事件：有/无”，详情用 2L/3R 命令查看
+                if card.get("event_text", "无") == "无":
+                    cells.append(Text("事件：无", style="green"))
+                else:
+                    cells.append(Text("事件：有", style="yellow"))
         hint = hints.get(opt.index, "")
         if opt.index == 3 and not affordable_flags.get(opt.index, True):
             hint = Text(hint + "（资源不足，不可选）", style="bold red")
         table.add_row(str(opt.index), cells[0], cells[1], hint)
     return table
+
+
+def card_inspect_panel(card, where):
+    """选路时用 2L/3R 等命令查看明牌：拾荒资源、事件、战斗、得分。"""
+    table = Table.grid(padding=(0, 2))
+    table.add_column(style="dim", justify="right")
+    table.add_column()
+    table.add_row("位置", where)
+    table.add_row("拾荒", _scavenge_text(card))
+    table.add_row("事件", card.get("event_text", "无"))
+    z = card["zombies"]
+    if z["count"] > 0:
+        zombie = "丧尸 %d 只" % z["count"]
+        if z["level"] > 0:
+            zombie += "（屍群等级 %d）" % z["level"]
+        table.add_row("战斗", zombie)
+    else:
+        table.add_row("战斗", "无")
+    table.add_row("得分", "%d 分" % card.get("score", 0))
+    return Panel(table, title="卡牌详情", border_style="bright_blue")
 
 
 def dice_results_table(entries):

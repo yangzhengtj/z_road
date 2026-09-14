@@ -24,7 +24,7 @@ def scripted_effect_decision(engine):
     if needed["type"] == fx.DECISION_PAY_GAS:
         # 尽量足额支付，不够就付光
         return {"gas_pay": min(needed["required"], needed["available_gas"])}
-    if needed["type"] == fx.DECISION_SURVIVOR_UPKEEP:
+    if needed["type"] == fx.DECISION_ZEALOT_UPKEEP:
         return {"keep": needed["can_keep"]}
     return None
 

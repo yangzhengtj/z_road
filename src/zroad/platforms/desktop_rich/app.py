@@ -57,16 +57,18 @@ class GameApp(object):
         self.console.input("[dim]%s[/dim]" % prompt)
 
     def ask_menu(self, prompt, options):
-        """数字/字母菜单。options: [(key, label, 是否可用)]，返回 key。"""
+        """数字/字母菜单。options: [(key, label, 是否可用)]，返回 key。
+
+        约定：label 文本自身已带快捷键提示，如“新游戏（n）”，界面不再重复括号。
+        """
         valid = {}
         self.console.print()
         for key, label, enabled in options:
             valid[key] = enabled
             if enabled:
-                self.console.print("  [bold][%s][/bold] %s" % (key, label))
+                self.console.print("  [bold]%s[/bold]" % label)
             else:
-                self.console.print("  [dim red][%s] %s（不可用）[/dim red]"
-                                   % (key, label))
+                self.console.print("  [dim red]%s（不可用）[/dim red]" % label)
         keys = [k for k, _, ok in options if ok]
         while True:
             choice = Prompt.ask(prompt, choices=keys, show_choices=False)
@@ -123,16 +125,16 @@ class GameApp(object):
 
     # ---------- 主菜单 ----------
     def run(self):
-        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6",
+        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.1",
                                      border_style="magenta"))
         while True:
             try:
                 auto_ok = self.store.exists(AUTO_SLOT)
                 choice = self.ask_menu("主菜单", [
-                    ("n", "新游戏", True),
-                    ("c", "继续自动存档", auto_ok),
-                    ("l", "读取存档", True),
-                    ("q", "退出", True),
+                    ("n", "新游戏（n）", True),
+                    ("c", "继续自动存档（c）", auto_ok),
+                    ("l", "读取存档（l）", True),
+                    ("q", "退出（q）", True),
                 ])
                 if choice == "n":
                     self.new_game()
@@ -162,18 +164,22 @@ class GameApp(object):
     def load_menu(self):
         previews = self.store.list_all()
         options = []
+        slot_by_key = {}
+        key_map = {"auto": "a", "manual_1": "1", "manual_2": "2", "manual_3": "3"}
         for p in previews:
             if p is None:
                 continue
+            key = key_map[p["slot"]]
+            slot_by_key[key] = p["slot"]
             finished = p["phase"] == "finished"
-            label = "%s ｜ 第%d轮 ｜ %d人 ｜ 已赢%d张 ｜ %s%s" % (
-                p["label"], p["round_no"], p["survivors"], p["won_count"],
+            label = "%s（%s）｜第%d轮 ｜ %d人 ｜ 已赢%d张 ｜ %s%s" % (
+                p["label"], key, p["round_no"], p["survivors"], p["won_count"],
                 p["saved_at"], "（已结算）" if finished else "")
-            options.append((p["slot"], label, not finished))
-        options.append(("b", "返回主菜单", True))
+            options.append((key, label, not finished))
+        options.append(("b", "返回主菜单（b）", True))
         choice = self.ask_menu("选择存档", options)
         if choice != "b":
-            self.load_slot(choice)
+            self.load_slot(slot_by_key[choice])
 
     def load_slot(self, slot):
         state = self.store.read(slot)
@@ -198,16 +204,29 @@ class GameApp(object):
         self.console.clear()
         self.console.print(render.status_panel(
             player, engine.state.round_no, engine.current_stage(),
-            self.total_rounds))
+            self.total_rounds, score=engine.current_score()))
         options = engine.state.current_options
         flags = {opt.index: engine.path_is_affordable(opt) for opt in options}
-        self.console.print(render.path_options_table(options, self.catalog, flags))
-        choice = self.ask_menu("选择路径", [
-            ("1", "路径一（全暗，选前 +2 任意资源）", True),
-            ("2", "路径二（左明右暗，正常）", True),
-            ("3", "路径三（全明，选前 -2 任意资源）", flags.get(3, True)),
-        ])
-        path_index = int(choice)
+        while True:
+            self.console.print(render.path_options_table(
+                options, self.catalog, flags))
+            raw = Prompt.ask(
+                "选路径输入 1/2/3；查看明牌输入如 2L（路径2左卡）、3R（路径3右卡）")
+            command = raw.strip().upper()
+            # 1) 查看明牌详情：形如 2L / 3R
+            if len(command) == 2 and command[0] in "123" and command[1] in "LR":
+                self._inspect_path_card(options, int(command[0]),
+                                        0 if command[1] == "L" else 1)
+                continue
+            # 2) 选定路径
+            if command in ("1", "2", "3"):
+                path_index = int(command)
+                if path_index == 3 and not flags.get(3, True):
+                    self.console.print("[red]总资源不足 2，路径三不可选[/red]")
+                    continue
+                break
+            self.console.print("[yellow]无法识别的输入，请输入 1/2/3 或 2L/3R 这类命令[/yellow]")
+
         option = engine._find_option(path_index)
         dist = None
         if option.bonus > 0:
@@ -218,6 +237,19 @@ class GameApp(object):
             dist = self.ask_distribution(option.cost, player, paying=True)
         engine.choose_path(path_index, dist)
 
+    def _inspect_path_card(self, options, path_index, position):
+        """查看某条路径某侧明牌的事件/拾荒/战斗/得分；背面则提示看不到。"""
+        option = next((o for o in options if o.index == path_index), None)
+        if option is None:
+            self.console.print("[yellow]没有路径 %d[/yellow]" % path_index)
+            return
+        card_id = option.visible_card_id(position, self.catalog)
+        where = "路径%d%s卡" % (path_index, "左" if position == 0 else "右")
+        if card_id is None:
+            self.console.print("[dim]%s 背面朝下，选择前无法查看[/dim]" % where)
+            return
+        self.console.print(render.card_inspect_panel(self.catalog[card_id], where))
+
     # ---------- 遭遇卡 ----------
     def make_decision(self, needed, player):
         """把引擎要求的玩家决策翻译成终端问答。"""
@@ -225,10 +257,15 @@ class GameApp(object):
             return None
         dtype = needed["type"]
         if dtype == fx.DECISION_CHOOSE_RESOURCE:
-            options = [(key, render.RES_NAMES[key], True)
-                       for key in needed["available"]]
-            key = self.ask_menu("选择损失哪种资源", options)
-            return {"resource": key}
+            # 用 1/2/3 对应可用资源，label 自带按键提示
+            key_map = {}
+            options = []
+            for i, key in enumerate(needed["available"], start=1):
+                hotkey = str(i)
+                key_map[hotkey] = key
+                options.append((hotkey, "%s（%s）" % (render.RES_NAMES[key], hotkey), True))
+            hotkey = self.ask_menu("选择损失哪种资源", options)
+            return {"resource": key_map[hotkey]}
         if dtype == fx.DECISION_PAY_GAS:
             hi = min(needed["required"], needed["available_gas"])
             self.console.print("需要 %d 汽油，持有 %d"
@@ -236,13 +273,13 @@ class GameApp(object):
             pay = self._ask_int("支付多少汽油（每少 1 损失 1 人）", 0, hi,
                                 default=hi)
             return {"gas_pay": pay}
-        if dtype == fx.DECISION_SURVIVOR_UPKEEP:
+        if dtype == fx.DECISION_ZEALOT_UPKEEP:
             if needed["can_keep"]:
-                keep = Prompt.ask("支付 %d 弹药让伙伴继续同行？(y/n)"
+                keep = Prompt.ask("支付 %d 弹药让狂热者继续同行？是（y）/否（n）"
                                   % needed["ammo"], choices=["y", "n"],
                                   default="y")
                 return {"keep": keep == "y"}
-            self.console.print("[yellow]弹药不足，伙伴离队[/yellow]")
+            self.console.print("[yellow]弹药不足，狂热者离队[/yellow]")
             return {"keep": False}
         return None
 
@@ -253,7 +290,7 @@ class GameApp(object):
         self.console.clear()
         self.console.print(render.status_panel(
             player, engine.state.round_no, engine.current_stage(),
-            self.total_rounds))
+            self.total_rounds, score=engine.current_score()))
         self.console.print(render.card_panel(card, title="遭遇卡 %s" % card_id))
         self.pause("查看卡面后按回车结算…")
 
@@ -291,9 +328,9 @@ class GameApp(object):
 
         while engine.state.pending_combat is not None:
             actions = {a["action"]: a for a in engine.combat_actions()}
-            menu = [("m", "近战（每人 1 骰）", "melee" in actions)]
-            menu.insert(0, ("r", "远程攻击（耗弹药）", "ranged" in actions))
-            menu.append(("f", "逃跑（耗 2 汽油、弃牌）", "flee" in actions))
+            menu = [("m", "近战（m，每人 1 骰）", "melee" in actions)]
+            menu.insert(0, ("r", "远程攻击（r，耗弹药）", "ranged" in actions))
+            menu.append(("f", "逃跑（f，耗 2 汽油、弃牌）", "flee" in actions))
             choice = self.ask_menu("选择行动", menu)
 
             if choice == "r":
@@ -372,13 +409,14 @@ class GameApp(object):
         path = self.store.write(AUTO_SLOT, engine)
         self.console.print("[dim]已自动存档 → %s[/dim]" % path.name)
         choice = self.ask_menu("轮末", [
-            ("c", "进入下一轮", True),
-            ("s", "保存到手动槽", True),
-            ("q", "保存并退回主菜单", True),
+            ("c", "进入下一轮（c）", True),
+            ("s", "保存到手动槽（s）", True),
+            ("q", "保存并退回主菜单（q）", True),
         ])
         if choice == "s":
             slot = self.ask_menu("选择手动槽",
-                                 [(s, SLOT_LABELS[s], True) for s in MANUAL_SLOTS])
+                                 [(s, "%s（%d）" % (SLOT_LABELS[s], i), True)
+                                  for i, s in enumerate(MANUAL_SLOTS, start=1)])
             if self.store.exists(slot):
                 ok = Prompt.ask("该槽已有存档，覆盖？(y/n)", choices=["y", "n"],
                                 default="y")

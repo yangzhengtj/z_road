@@ -119,6 +119,10 @@ class PlayerState:
         """是否持有某特殊道具。"""
         return item_name in self.special_items
 
+    def count_item(self, item_name):
+        """持有某特殊道具的数量（道具可重复持有，如 2 张地图、2 个毒气）。"""
+        return self.special_items.count(item_name)
+
     def gain_item(self, item_name):
         """获得特殊道具（允许重复获得）。"""
         self.special_items.append(item_name)

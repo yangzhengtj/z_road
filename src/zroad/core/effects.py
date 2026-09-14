@@ -1,22 +1,26 @@
-"""effects.py —— 卡牌事件的解析与立即结算（M3 落地）。
+"""effects.py —— 卡牌事件的解析与立即结算（M3 落地，v0.6.1 重构解析）。
 
 两张“面孔”：
-  1. parse_effect(card)：纯函数，把卡牌的 event_raw 中文文本解析成结构化“效果指令”dict；
-     60 张卡必须全部命中已知类型，解析不了直接报错（测试 test_effects_full_coverage
-     会守住这条线，防止新增卡牌时静默漏处理）。
-  2. resolve_immediate(spec, player, rng, stats, decision)：把“立即生效”的效果结算到
-     玩家身上（改人数/资源/道具/额外分、需要时掷骰）；战斗修正类效果不在此结算，
-     由引擎挂到 pending_combat 上交给 M4 的战斗模块。
+  1. parse_effect(card)：纯函数，把卡牌的 event_raw（开发者结算说明）解析成
+     结构化“效果指令”dict；60 张卡必须全部命中已知类型，解析不了直接报错
+     （测试 test_effects_full_coverage 守住这条线，防止新增卡牌时静默漏处理）。
+  2. resolve_immediate(spec, player, rng, stats, decision)：把“立即生效”的效果
+     结算到玩家身上（改人数/资源/道具/额外分、需要时掷骰）；战斗修正类效果不在
+     此结算，由引擎挂到 pending_combat 上交给战斗模块。
+
+v0.6.1 起卡牌数据拆成两个字段：
+  event_text 给玩家看（选路时可查看），event_raw 给本模块解析，互不混用。
+道具名同时兼容「书名号」和（括号）两种写法；括注“（注：…）”是给开发者的备注，
+解析前剔除，避免把备注误当道具名。
 
 设计约束同 core 其它模块：普通 dict、无第三方、无 I/O、兼容 MicroPython。
-效果指令 spec 的统一形状：{"kind": 类型, "timing": "immediate"/"combat", ...参数}
 """
 
 import re
 
-from .constants import (EVENT_NONE, EVENT_PREFIX, DICE_NORMAL,
+from .constants import (EVENT_NONE, EVENT_PREFIX, DICE_NORMAL, SPECIAL_ITEMS,
                         ITEM_SNIPER, ITEM_MAP, ITEM_BUS, ITEM_GAS, ITEM_WOUND,
-                        ITEM_SURVIVOR)
+                        ITEM_ZEALOT)
 from .model import EngineError
 
 # ---- 效果类型常量（同样不用 enum） ----
@@ -25,20 +29,20 @@ KIND_GAIN_SURVIVORS = "gain_survivors"   # 队伍人数 +N
 KIND_LOSE_SURVIVORS = "lose_survivors"   # 队伍人数 -N（如 II-6 毒蛇）
 KIND_GAIN_ITEM = "gain_item"             # 获得特殊道具
 KIND_LOSE_RESOURCE_CHOICE = "lose_resource_choice"  # 三选一资源 -N
-KIND_ITEM_MAP_SCORE = "item_map_score"   # 有地图：+分并消耗
+KIND_ITEM_MAP_SCORE = "item_map_score"   # 每张地图 +分并消耗
 KIND_ITEM_BUS_NOTE = "item_bus_note"     # 有校车：获得被动能力（无即时变化）
 KIND_ITEM_SNIPER_PASS = "item_sniper_pass"  # 有狙击枪安全通过，否则 -N 人
 KIND_ITEM_WOUND = "item_wound"           # 有“受伤”：-1 并消耗
-KIND_ITEM_GAS = "item_gas"               # 有“毒气”：-1 并消耗
-KIND_ITEM_SURVIVOR_UPKEEP = "item_survivor_upkeep"  # 付弹药保留“幸存者”，否则弃
+KIND_ITEM_GAS = "item_gas"               # 每个“毒气”标记 -1（不消耗标记）
+KIND_ITEM_ZEALOT_UPKEEP = "item_zealot_upkeep"  # 付弹药保留“狂热者”，否则弃
 KIND_PAY_GAS_OR_LOSE = "pay_gas_or_lose"  # 付汽油否则按缺口损人
 KIND_RUSSIAN_ROULETTE = "russian_roulette"  # 按人数掷骰，每个咬伤面 -1
 KIND_RESCUE_SHOT = "rescue_shot"         # 掷 1 骰，不在解救面则 -1
-# ---- 战斗修正类（timing=combat，M4 使用） ----
+# ---- 战斗修正类（timing=combat，战斗模块使用） ----
 KIND_MOD_RANGED_BITE_ADDS = "mod_ranged_bite_adds"  # 远程掷出咬伤则丧尸+1
 KIND_MOD_NO_MEDS = "mod_no_meds"         # 本场不能用药剂
 KIND_MOD_NO_FLEE = "mod_no_flee"         # 本场不能逃跑
-KIND_MOD_SURVIVOR_NUKE = "mod_survivor_nuke"  # 有“幸存者”则全屏秒杀、跳过战斗
+KIND_MOD_ZEALOT_NUKE = "mod_zealot_nuke"  # 有“狂热者”则全屏秒杀、跳过战斗
 
 TIMING_IMMEDIATE = "immediate"
 TIMING_COMBAT = "combat"
@@ -46,7 +50,12 @@ TIMING_COMBAT = "combat"
 # 需要玩家做决策的效果类型（前端据此弹出对应询问）
 DECISION_CHOOSE_RESOURCE = "choose_resource"
 DECISION_PAY_GAS = "pay_gas"
-DECISION_SURVIVOR_UPKEEP = "survivor_upkeep"
+DECISION_ZEALOT_UPKEEP = "zealot_upkeep"
+
+# 开发者备注，如“（注：整套卡牌中一共有 2 张地图…）”，解析前整体剔除
+_NOTE_RE = re.compile(r"[（(]注[:：].*?[）)]")
+# 匹配「道具名」或（道具名）形式的道具提及
+_ITEM_BRACKET_RE = re.compile(r"[「（(](.+?)[」）)]")
 
 
 # ============================ 1. 解析 ============================
@@ -57,14 +66,32 @@ def _spec(kind, timing, **params):
     return result
 
 
-def _extract_item(text):
-    """从“特殊道具（地图）”这类文本中取出括号内道具名。"""
-    match = re.search(r"[（(](.+?)[）)]", text)
-    return match.group(1) if match else None
+def _strip_notes(text):
+    """剔除开发者备注（注：…），其余文本原样保留。"""
+    return _NOTE_RE.sub("", text)
+
+
+def _find_item(text):
+    """在文本中寻找被「」或（）括起来的已知特殊道具名，找到即返回规范名。"""
+    for match in _ITEM_BRACKET_RE.finditer(text):
+        name = match.group(1).strip()
+        if name in SPECIAL_ITEMS:
+            return name
+    return None
+
+
+def _gain_item_name(text):
+    """“获得特殊道具：地图。（注：…）”→ 道具名（截到句号/括号前）。"""
+    item = _find_item(text)
+    if item:
+        return item
+    tail = text.split("：", 1)[-1]
+    tail = re.split(r"[。（(]", tail, 1)[0].strip()
+    return tail
 
 
 def parse_effect(card):
-    """把一张卡牌的事件文本解析为效果指令。
+    """把一张卡牌的事件结算说明解析为效果指令。
 
     规则按“特异 → 通用”排序：先匹配战斗修正与道具条件句，最后才落到通用句式，
     避免关键词互相误命中。
@@ -72,14 +99,15 @@ def parse_effect(card):
     text = (card.get("event_raw") or "").strip()
     if text.startswith(EVENT_PREFIX):
         text = text[len(EVENT_PREFIX):].strip()
+    text = _strip_notes(text)
 
     # 0) 无事件
     if text == EVENT_NONE:
         return _spec(KIND_NONE, TIMING_IMMEDIATE)
 
-    # 1) 战斗修正类（红字效果，影响本场战斗，M4 消费）
+    # 1) 战斗修正类（红字效果，影响本场战斗）
     if "丧尸全部死亡" in text or "不再进行战斗" in text:
-        return _spec(KIND_MOD_SURVIVOR_NUKE, TIMING_COMBAT, item=ITEM_SURVIVOR)
+        return _spec(KIND_MOD_ZEALOT_NUKE, TIMING_COMBAT, item=ITEM_ZEALOT)
     if "不能使用药剂" in text:
         return _spec(KIND_MOD_NO_MEDS, TIMING_COMBAT)
     if "不能逃跑" in text:
@@ -87,33 +115,41 @@ def parse_effect(card):
     if "远距离攻击" in text:
         return _spec(KIND_MOD_RANGED_BITE_ADDS, TIMING_COMBAT)
 
-    # 2) 获得道具 / 人数
+    # 2) 获得道具
     if text.startswith("获得特殊道具"):
-        item = _extract_item(text)
-        if item is None:
-            # 形如“获得特殊道具：狙击枪”（冒号后直接是名字）
-            item = text.split("：", 1)[-1].strip()
-        return _spec(KIND_GAIN_ITEM, TIMING_IMMEDIATE, item=item)
+        return _spec(KIND_GAIN_ITEM, TIMING_IMMEDIATE,
+                     item=_gain_item_name(text))
 
-    # 3) 六种道具的条件触发句
-    if "特殊道具（地图）" in text:
+    # 3) 道具条件触发句：先找出句中提到的道具，再按道具+关键词分支
+    item = _find_item(text)
+    if item == ITEM_MAP and "得分" in text:
         score = 6
         match = re.search(r"得分\+(\d+)", text)
         if match:
             score = int(match.group(1))
-        return _spec(KIND_ITEM_MAP_SCORE, TIMING_IMMEDIATE, item=ITEM_MAP, score=score)
-    if "特殊道具（校车）" in text:
+        return _spec(KIND_ITEM_MAP_SCORE, TIMING_IMMEDIATE,
+                     item=ITEM_MAP, score=score)
+    if item == ITEM_BUS:
         return _spec(KIND_ITEM_BUS_NOTE, TIMING_IMMEDIATE, item=ITEM_BUS)
-    if "特殊道具（狙击枪）" in text:
+    if item == ITEM_SNIPER:
+        lose = 2
+        match = re.search(r"队伍人数-(\d+)", text)
+        if match:
+            lose = int(match.group(1))
         return _spec(KIND_ITEM_SNIPER_PASS, TIMING_IMMEDIATE,
-                     item=ITEM_SNIPER, lose_if_missing=2)
-    if "特殊道具（受伤）" in text:
+                     item=ITEM_SNIPER, lose_if_missing=lose)
+    if item == ITEM_WOUND:
         return _spec(KIND_ITEM_WOUND, TIMING_IMMEDIATE, item=ITEM_WOUND, lose=1)
-    if "特殊道具（毒气）" in text:
-        return _spec(KIND_ITEM_GAS, TIMING_IMMEDIATE, item=ITEM_GAS, lose=1)
-    if "继续持有" in text or "支付3个弹药" in text:
-        return _spec(KIND_ITEM_SURVIVOR_UPKEEP, TIMING_IMMEDIATE,
-                     item=ITEM_SURVIVOR, ammo=3)
+    if item == ITEM_GAS:
+        # 每持有 1 个毒气标记损失 1 人（标记不消耗，III-5/III-6 各自独立触发）
+        return _spec(KIND_ITEM_GAS, TIMING_IMMEDIATE, item=ITEM_GAS, lose_per=1)
+    if item == ITEM_ZEALOT and ("弹药" in text or "继续持有" in text):
+        ammo = 3
+        match = re.search(r"支付(\d+)个弹药", text)
+        if match:
+            ammo = int(match.group(1))
+        return _spec(KIND_ITEM_ZEALOT_UPKEEP, TIMING_IMMEDIATE,
+                     item=ITEM_ZEALOT, ammo=ammo)
 
     # 4) 资源三选一损失
     if "三选一" in text and "数量-1" in text:
@@ -144,7 +180,7 @@ def parse_effect(card):
             return _spec(KIND_GAIN_SURVIVORS, TIMING_IMMEDIATE, amount=amount)
         return _spec(KIND_LOSE_SURVIVORS, TIMING_IMMEDIATE, amount=amount)
 
-    # 8) 兜底：未识别文本直接报错，绝不静默忽略
+    # 9) 兜底：未识别文本直接报错，绝不静默忽略
     raise EngineError("无法解析卡牌事件：%s｜文本：%s" % (card.get("id"), text))
 
 
@@ -167,8 +203,8 @@ def decision_needed(spec, player):
     if kind == KIND_PAY_GAS_OR_LOSE:
         return {"type": DECISION_PAY_GAS, "required": spec["gas"],
                 "available_gas": player.resources.gas}
-    if kind == KIND_ITEM_SURVIVOR_UPKEEP and player.has_item(spec["item"]):
-        return {"type": DECISION_SURVIVOR_UPKEEP, "ammo": spec["ammo"],
+    if kind == KIND_ITEM_ZEALOT_UPKEEP and player.has_item(spec["item"]):
+        return {"type": DECISION_ZEALOT_UPKEEP, "ammo": spec["ammo"],
                 "can_keep": player.resources.ammo >= spec["ammo"]}
     return None
 
@@ -250,23 +286,28 @@ def resolve_immediate(spec, player, rng, stats=None, decision=None):
             raise EngineError("不能选择已无库存的资源：%s" % key)
         _spend(player, key, spec["amount"], stats)
         result["resources_delta"][key] = -spec["amount"]
-        result["logs"].append("损失 %d 个所选资源" % spec["amount"])
+        result["logs"].append("损失 1 个所选资源")
         return result
 
     if kind == KIND_ITEM_MAP_SCORE:
-        if player.has_item(spec["item"]):
-            player.consume_item(spec["item"])
-            player.bonus_score += spec["score"]
+        # 每张地图各 +score 分并全部消耗（可累计持有 2 张）
+        held = player.count_item(spec["item"])
+        if held > 0:
+            gained = held * spec["score"]
+            for _ in range(held):
+                player.consume_item(spec["item"])
+            player.bonus_score += gained
             result["item_consumed"] = spec["item"]
-            result["bonus_score"] = spec["score"]
-            result["logs"].append("地图确认路线，得分 +%d 并消耗地图" % spec["score"])
+            result["bonus_score"] = gained
+            result["logs"].append("比对 %d 张地图，得分 +%d 并消耗地图"
+                                  % (held, gained))
         else:
             result["logs"].append("没有地图，正常通过")
         return result
 
     if kind == KIND_ITEM_BUS_NOTE:
         held = player.has_item(spec["item"])
-        result["logs"].append("校车可加固冲撞，变异丧尸按普通处理"
+        result["logs"].append("校车可加固冲撞，高等级丧尸按普通骰处理"
                               if held else "没有校车，无事发生")
         return result
 
@@ -280,31 +321,42 @@ def resolve_immediate(spec, player, rng, stats=None, decision=None):
             result["logs"].append("没有狙击枪硬闯，损失 %d 人" % lost)
         return result
 
-    if kind in (KIND_ITEM_WOUND, KIND_ITEM_GAS):
+    if kind == KIND_ITEM_WOUND:
         if player.has_item(spec["item"]):
             player.consume_item(spec["item"])
             lost = _lose_players(player, spec["lose"], result, stats)
             result["item_consumed"] = spec["item"]
-            result["logs"].append("触发道具【%s】，损失 %d 人并消耗该道具"
-                                  % (spec["item"], lost))
+            result["logs"].append("受伤队友不支，损失 %d 人并消耗受伤标记" % lost)
         else:
-            result["logs"].append("没有道具【%s】，无事发生" % spec["item"])
+            result["logs"].append("没有受伤标记，无事发生")
         return result
 
-    if kind == KIND_ITEM_SURVIVOR_UPKEEP:
+    if kind == KIND_ITEM_GAS:
+        # 方案 B：按持有毒气数扣人，不消耗标记（III-5、III-6 各自独立发作）
+        held = player.count_item(spec["item"])
+        if held > 0:
+            lost = _lose_players(player,
+                                 held * spec["lose_per"], result, stats)
+            result["logs"].append("%d 个毒气标记发作，损失 %d 人（标记保留）"
+                                  % (held, lost))
+        else:
+            result["logs"].append("没有毒气标记，无事发生")
+        return result
+
+    if kind == KIND_ITEM_ZEALOT_UPKEEP:
         if not player.has_item(spec["item"]):
             return result
         keep = bool(decision and decision.get("keep"))
         if keep:
             if player.resources.ammo < spec["ammo"]:
-                raise EngineError("弹药不足 %d，无法继续持有该伙伴" % spec["ammo"])
+                raise EngineError("弹药不足 %d，无法继续持有狂热者" % spec["ammo"])
             _spend(player, "ammo", spec["ammo"], stats)
             result["resources_delta"]["ammo"] = -spec["ammo"]
-            result["logs"].append("支付 %d 弹药，伙伴继续同行" % spec["ammo"])
+            result["logs"].append("支付 %d 弹药，狂热者继续同行" % spec["ammo"])
         else:
             player.consume_item(spec["item"])
             result["item_consumed"] = spec["item"]
-            result["logs"].append("未支付弹药，伙伴离队（消耗道具）")
+            result["logs"].append("未支付弹药，狂热者离队（消耗标记）")
         return result
 
     if kind == KIND_PAY_GAS_OR_LOSE:

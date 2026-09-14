@@ -16,7 +16,7 @@ from zroad.core.rng import SeededRng
 from zroad.core.engine import Engine
 from zroad.core import effects as fx
 from zroad.core.constants import (PHASE_ENCOUNTER, PHASE_ROUND_END,
-                                  PHASE_FINISHED, ITEM_SURVIVOR)
+                                  PHASE_FINISHED, ITEM_ZEALOT)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -59,18 +59,18 @@ EXPECTED_KIND = {
     "III-3": fx.KIND_PAY_GAS_OR_LOSE, "III-4": fx.KIND_PAY_GAS_OR_LOSE,
     "III-5": fx.KIND_ITEM_GAS, "III-6": fx.KIND_ITEM_GAS,
     "III-7": fx.KIND_MOD_RANGED_BITE_ADDS, "III-8": fx.KIND_MOD_RANGED_BITE_ADDS,
-    "III-9": fx.KIND_ITEM_SURVIVOR_UPKEEP,
+    "III-9": fx.KIND_ITEM_ZEALOT_UPKEEP,
     "III-10": fx.KIND_MOD_NO_MEDS, "III-11": fx.KIND_MOD_NO_MEDS,
     "III-12": fx.KIND_NONE,
     "III-13": fx.KIND_RESCUE_SHOT, "III-14": fx.KIND_RESCUE_SHOT,
     "III-15": fx.KIND_RESCUE_SHOT, "III-16": fx.KIND_NONE,
-    "III-17": fx.KIND_MOD_SURVIVOR_NUKE, "III-18": fx.KIND_MOD_RANGED_BITE_ADDS,
+    "III-17": fx.KIND_MOD_ZEALOT_NUKE, "III-18": fx.KIND_MOD_RANGED_BITE_ADDS,
     "III-19": fx.KIND_MOD_NO_FLEE, "III-20": fx.KIND_MOD_NO_FLEE,
     "III-21": fx.KIND_NONE, "III-22": fx.KIND_NONE,
 }
 
 COMBAT_TIMING_KINDS = {fx.KIND_MOD_RANGED_BITE_ADDS, fx.KIND_MOD_NO_MEDS,
-                       fx.KIND_MOD_NO_FLEE, fx.KIND_MOD_SURVIVOR_NUKE}
+                       fx.KIND_MOD_NO_FLEE, fx.KIND_MOD_ZEALOT_NUKE}
 
 
 def test_all_cards_effects_covered(cards):
@@ -157,6 +157,16 @@ def test_map_score():
     assert without.bonus_score == 0
 
 
+def test_map_score_stacks_per_map():
+    """累计 2 张地图时每张 +6（共 +12）并全部消耗。"""
+    p = _player(items=["地图", "地图"])
+    spec = {"kind": fx.KIND_ITEM_MAP_SCORE, "timing": fx.TIMING_IMMEDIATE,
+            "item": "地图", "score": 6}
+    result = fx.resolve_immediate(spec, p, SeededRng(1))
+    assert p.bonus_score == 12 and p.count_item("地图") == 0
+    assert result["bonus_score"] == 12
+
+
 def test_sniper_pass():
     with_gun = _player(items=["狙击枪"])
     spec = {"kind": fx.KIND_ITEM_SNIPER_PASS, "timing": fx.TIMING_IMMEDIATE,
@@ -168,26 +178,31 @@ def test_sniper_pass():
     assert no_gun.survivors == 3  # 缺道具 -2
 
 
-def test_gas_item_triggers_twice():
-    """两张毒气道具分别在 III-5、III-6 各消耗一个、各损 1 人。"""
+def test_gas_item_per_marker_not_consumed():
+    """方案 B：每持有 1 个毒气标记损 1 人，标记不消耗，III-5/III-6 各自独立触发。"""
     p = _player(items=["毒气", "毒气"])
     spec = {"kind": fx.KIND_ITEM_GAS, "timing": fx.TIMING_IMMEDIATE,
-            "item": "毒气", "lose": 1}
+            "item": "毒气", "lose_per": 1}
     fx.resolve_immediate(spec, p, SeededRng(1))
+    assert p.survivors == 3 and p.count_item("毒气") == 2  # 扣 2、标记保留
     fx.resolve_immediate(spec, p, SeededRng(1))
-    assert p.special_items == [] and p.survivors == 3
+    assert p.survivors == 1 and p.count_item("毒气") == 2  # 再次独立扣 2
+    # 没有毒气则无事
+    clean = _player()
+    fx.resolve_immediate(spec, clean, SeededRng(1))
+    assert clean.survivors == 5
 
 
-def test_survivor_upkeep():
-    spec = {"kind": fx.KIND_ITEM_SURVIVOR_UPKEEP, "timing": fx.TIMING_IMMEDIATE,
-            "item": ITEM_SURVIVOR, "ammo": 3}
-    keep = _player(ammo=4, items=[ITEM_SURVIVOR])
+def test_zealot_upkeep():
+    spec = {"kind": fx.KIND_ITEM_ZEALOT_UPKEEP, "timing": fx.TIMING_IMMEDIATE,
+            "item": ITEM_ZEALOT, "ammo": 3}
+    keep = _player(ammo=4, items=[ITEM_ZEALOT])
     fx.resolve_immediate(spec, keep, SeededRng(1), decision={"keep": True})
-    assert keep.has_item(ITEM_SURVIVOR) and keep.resources.ammo == 1
-    abandon = _player(ammo=4, items=[ITEM_SURVIVOR])
+    assert keep.has_item(ITEM_ZEALOT) and keep.resources.ammo == 1
+    abandon = _player(ammo=4, items=[ITEM_ZEALOT])
     fx.resolve_immediate(spec, abandon, SeededRng(1), decision={"keep": False})
-    assert not abandon.has_item(ITEM_SURVIVOR) and abandon.resources.ammo == 4
-    poor = _player(ammo=2, items=[ITEM_SURVIVOR])
+    assert not abandon.has_item(ITEM_ZEALOT) and abandon.resources.ammo == 4
+    poor = _player(ammo=2, items=[ITEM_ZEALOT])
     with pytest.raises(EngineError):
         fx.resolve_immediate(spec, poor, SeededRng(1), decision={"keep": True})
 
@@ -300,14 +315,14 @@ def test_engine_combat_mods_attached(cards, config):
     assert all(not o["available"] for o in view["opportunities"])
 
 
-def test_engine_survivor_nuke_skips_combat(cards, config):
+def test_engine_zealot_nuke_skips_combat(cards, config):
     engine = Engine.new_solo(cards, config, seed=1)
-    engine.state.player.gain_item(ITEM_SURVIVOR)
+    engine.state.player.gain_item(ITEM_ZEALOT)
     _force_encounter(engine, "III-17")  # 6 丧尸、level1
     outcome = engine.begin_card_resolution()
     assert outcome["combat"] is None  # 全屏秒杀，战斗跳过
     assert engine.state.pending_combat is None
-    assert not engine.state.player.has_item(ITEM_SURVIVOR)
+    assert not engine.state.player.has_item(ITEM_ZEALOT)
     assert engine.state.stats["zombies_killed"] == 6
     assert "III-17" in engine.state.player.won_card_ids
 
@@ -328,7 +343,7 @@ def test_full_game_smoke_with_decisions(cards, config):
             return {"resource": needed["available"][0]}
         if needed["type"] == fx.DECISION_PAY_GAS:
             return {"gas_pay": min(needed["required"], needed["available_gas"])}
-        if needed["type"] == fx.DECISION_SURVIVOR_UPKEEP:
+        if needed["type"] == fx.DECISION_ZEALOT_UPKEEP:
             return {"keep": needed["can_keep"]}
         return None
 

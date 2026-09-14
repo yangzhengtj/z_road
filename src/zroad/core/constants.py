@@ -52,9 +52,10 @@ ITEM_MAP = "地图"
 ITEM_BUS = "校车"
 ITEM_GAS = "毒气"
 ITEM_WOUND = "受伤"
-ITEM_SURVIVOR = "幸存者"
+# 原“幸存者”标记自 v0.6.1 起改名“狂热者”（I-8 获得、III-9 养护、III-17 引爆）
+ITEM_ZEALOT = "狂热者"
 SPECIAL_ITEMS = (ITEM_SNIPER, ITEM_MAP, ITEM_BUS,
-                 ITEM_GAS, ITEM_WOUND, ITEM_SURVIVOR)
+                 ITEM_GAS, ITEM_WOUND, ITEM_ZEALOT)
 
 # ---- 对局模式 ----
 MODE_SOLO = "solo"   # 单人 SOLO（阶段 1）
