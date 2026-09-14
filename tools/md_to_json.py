@@ -49,15 +49,26 @@ def to_int(text, default=0):
     return default if text == "" else int(text)
 
 
+def _player_event_text(raw):
+    """规范化“事件”列（给玩家看的事件描述）。
+
+    去掉“事件：”前缀；空单元格或“事件：无”统一为“无”。
+    """
+    text = (raw or "").strip().replace("<br>", "\n")
+    if text.startswith("事件："):
+        text = text[len("事件："):].strip()
+    return text if text and text != "无" else "无"
+
+
 def convert_cards(md_path):
-    """卡牌.md（10 列）→ 卡牌记录列表。"""
+    """卡牌.md（11 列）→ 卡牌记录列表。"""
     cards = []
-    for cells in parse_md_table(md_path, 10):
-        # 列：序号 | 阶段 | 场景描述 | 弹药 | 汽油 | 药剂 | 事件 | 丧尸数量 | 丧尸等级 | 得分
-        _, card_id, scene, ammo, gas, meds, event, z_count, z_level, score = cells
+    for cells in parse_md_table(md_path, 11):
+        # 列：序号 | 阶段 | 场景描述 | 弹药 | 汽油 | 药剂 | 事件（玩家面）
+        #     | 事件结算说明（开发面） | 丧尸数量 | 丧尸等级 | 得分
+        (_no, card_id, scene, ammo, gas, meds, event_show,
+         event_rule, z_count, z_level, score) = cells
         stage_roman, order = card_id.split("-")
-        # Markdown 单元格内的 <br> 统一还原为换行
-        event = event.replace("<br>", "\n")
         cards.append({
             "id": card_id,
             "stage": ROMAN_STAGE[stage_roman.strip()],
@@ -68,7 +79,10 @@ def convert_cards(md_path):
                 "gas": to_int(gas),
                 "meds": to_int(meds),
             },
-            "event_raw": event if event else "无",
+            # event_text：选路/遭遇时展示给玩家的事件描述（不参与结算）
+            "event_text": _player_event_text(event_show),
+            # event_raw：事件结算说明，effects.py 据此解析规则
+            "event_raw": event_rule.strip() if event_rule.strip() else "无",
             "zombies": {"count": to_int(z_count), "level": to_int(z_level)},
             "score": to_int(score),
         })

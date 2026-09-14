@@ -4,11 +4,11 @@
 
 ## 文件清单
 
-| 文件 | 来源 | 内容 |
-|---|---|---|
-| `cards.json` | 由 `tools/md_to_json.py` 从 `参考资料/卡牌.md` 生成 | 60 张卡牌 |
-| `dice.json` | 由 `tools/md_to_json.py` 从 `参考资料/骰子.md` 生成 | 普通骰、强化骰各 6 面 |
-| `config.json` | 人工维护（依据实体说明书） | setup、单人路径、战斗、计分、评级、存档、双人模式等固定规则常量 |
+| 文件            | 来源                                        | 内容                                 |
+| ------------- | ----------------------------------------- | ---------------------------------- |
+| `cards.json`  | 由 `tools/md_to_json.py` 从 `参考资料/卡牌.md` 生成 | 60 张卡牌                             |
+| `dice.json`   | 由 `tools/md_to_json.py` 从 `参考资料/骰子.md` 生成 | 普通骰、强化骰各 6 面                       |
+| `config.json` | 人工维护（依据实体说明书）                             | setup、单人路径、战斗、计分、评级、存档、双人模式等固定规则常量 |
 
 ## 内容维护流程（重要）
 
@@ -31,7 +31,8 @@ python3 tools/md_to_json.py
   "order_in_stage": 14,
   "scene": "场景描述文本",
   "scavenge": {"ammo": 0, "gas": 0, "meds": 1},
-  "event_raw": "事件原文；'无' 表示没有事件",
+  "event_text": "展示给玩家的事件描述，'无' 表示没有事件",
+  "event_raw": "给开发者的事件结算说明，供 effects.py 解析",
   "zombies": {"count": 6, "level": 0},
   "score": 2
 }
@@ -40,7 +41,10 @@ python3 tools/md_to_json.py
 - `stage`：1/2/3，对应 I/II/III 阶段；
 - `scavenge`：拾荒步骤获得的资源数（ammo 弹药 / gas 汽油 / meds 药剂）；
 - `zombies.level`：0 = 普通战斗（普通骰）；1/2/3 = 屍群力量，近战时替换对应数量的强化骰；
-- `event_raw` 目前只做忠实转存；把它解析成可执行效果是 `core/effects.py`（M3）的工作。
+- 事件拆成两张“面孔”（v0.6.1 起）：
+  - `event_text`：**玩家面**，选路时用 `2L/3R` 等命令查看、遭遇时展示；
+  - `event_raw`：**开发面**，忠实转存《卡牌.md》的“事件结算说明”列，
+    由 `core/effects.py` 解析成可执行效果，不直接展示给玩家。
 
 ## dice.json 结构
 
