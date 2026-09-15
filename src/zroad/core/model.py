@@ -284,7 +284,14 @@ class GameState:
         state.encounter_queue = list(data.get("encounter_queue", []))
         state.encounter_index = data.get("encounter_index", 0)
         state.pending_combat = data.get("pending_combat")
-        state.stats = data.get("stats") or GameState._empty_stats()
+        stats = data.get("stats") or GameState._empty_stats()
+        # JSON 对象键只能是字符串，读回时把骰面键 "1".."6" 转回 int
+        # （否则读档后再掷骰，用整数骰面索引会 KeyError）
+        for kind_faces in stats.get("dice_faces", {}).values():
+            for face in list(kind_faces.keys()):
+                if isinstance(face, str) and face.isdigit():
+                    kind_faces[int(face)] = kind_faces.pop(face)
+        state.stats = stats
         state.rng_state = data.get("rng_state")
         state.round_log = list(data.get("round_log", []))
         return state

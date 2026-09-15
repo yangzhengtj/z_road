@@ -96,8 +96,11 @@ class Combat(object):
         return self.player.has_item(ITEM_BUS)
 
     def _record_dice(self, dice_kind, faces):
+        bucket = self.stats["dice_faces"].setdefault(
+            dice_kind, {})
         for face in faces:
-            self.stats["dice_faces"][dice_kind][face] += 1
+            # 用 get 兜底：兼容旧档缺失的骰面桶，不因统计结构崩溃
+            bucket[face] = bucket.get(face, 0) + 1
 
     def _spend(self, key, amount):
         self.player.resources.apply_delta({key: -amount})

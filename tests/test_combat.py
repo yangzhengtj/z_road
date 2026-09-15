@@ -259,3 +259,28 @@ def test_combat_state_roundtrip(cards, config):
     # 控制器惰性重建后可继续结算
     out = restored.combat_resolve_melee([])
     assert out["result"] in ("ongoing", "won", "lost")
+
+
+def test_dice_stats_survive_json_roundtrip(cards, config):
+    """回归：存档 JSON 往返后骰面统计键转回 int，继续掷骰不得 KeyError。"""
+    import json
+    engine = Engine.new_solo(cards, config, seed=3)
+    _force_encounter(engine, "I-13")  # 4 丧尸
+    engine.begin_card_resolution()
+    engine.combat_ranged(1)  # 先掷一批骰，让 stats.dice_faces 有累计
+    assert sum(engine.state.stats["dice_faces"]["normal"].values()) == 2
+
+    # 存档落盘再读回（JSON 会把数字键转成字符串）
+    blob = json.loads(json.dumps(engine.snapshot()))
+    restored = Engine.restore(cards, config, blob)
+    normal = restored.state.stats["dice_faces"]["normal"]
+    assert all(isinstance(face, int) for face in normal.keys())
+    before = sum(normal.values()) + sum(
+        restored.state.stats["dice_faces"]["enhanced"].values())
+    # 继续近战掷骰（每名幸存者 1 骰），不再抛 KeyError 且累计正确
+    restored.combat_roll_melee()
+    rolled = len(restored.state.pending_combat["last_roll"])
+    after = sum(restored.state.stats["dice_faces"]["normal"].values()) + sum(
+        restored.state.stats["dice_faces"]["enhanced"].values())
+    assert rolled == restored.state.player.survivors
+    assert after == before + rolled

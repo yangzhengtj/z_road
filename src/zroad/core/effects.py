@@ -218,11 +218,12 @@ def _result():
 
 
 def _record_dice(stats, dice_kind, faces):
-    """把一次掷出的若干骰面记入统计 stats.dice_faces。"""
+    """把一次掷出的若干骰面记入统计 stats.dice_faces（兼容旧档/缺桶）。"""
     if stats is None:
         return
+    bucket = stats["dice_faces"].setdefault(dice_kind, {})
     for face in faces:
-        stats["dice_faces"][dice_kind][face] += 1
+        bucket[face] = bucket.get(face, 0) + 1
 
 
 def _lose_players(player, count, result, stats):
