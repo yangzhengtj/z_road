@@ -100,8 +100,13 @@ def test_app_hard_difficulty_path2_costs_one(app, monkeypatch):
 
 
 def test_combat_status_reprints_each_batch(app):
-    """战斗信息框每批行动前重画，剩余丧尸数始终取引擎最新值。"""
+    """战斗信息框每批行动前重画，剩余丧尸数与资源余量始终取引擎最新值。"""
+    from zroad.core.model import Resources
+
     class _FakePlayer:
+        def __init__(self):
+            self.resources = Resources(3, 2, 1)
+
         def has_item(self, name):
             return False
 
@@ -116,9 +121,12 @@ def test_combat_status_reprints_each_batch(app):
 
     app._print_combat_status(_FakeEngine())
     _FakeState.pending_combat["zombies_left"] = 2
+    _FakeState.player.resources.ammo = 1  # 远程打掉一些弹药后也应刷新
     app._print_combat_status(_FakeEngine())
     out = app.console.file.getvalue()
     assert "剩余 6" in out and "剩余 2" in out
+    assert "弹药 3" in out and "弹药 1" in out
+    assert "汽油 2" in out and "药剂 1" in out
     assert out.count("战斗") >= 2
 
 

@@ -126,7 +126,7 @@ class GameApp(object):
 
     # ---------- 主菜单 ----------
     def run(self):
-        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.7",
+        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.8",
                                      border_style="magenta"))
         while True:
             try:
@@ -348,14 +348,18 @@ class GameApp(object):
         bus_downgrade = (pending["zombies_level"] > 0
                          and engine.state.player.has_item(ITEM_BUS)
                          and engine.state.player.has_item(ITEM_VEHICLE_ARMOR))
+        # 资源余量一并显示：远程攻击要耗弹药、药剂机会要耗药剂、逃跑要耗汽油，
+        # 玩家在每批行动前都能直接看到家底，不用翻顶部状态面板
+        resources = "｜资源：" + render.resources_text(engine.state.player)
         self.console.print(Panel(
-            "遭遇丧尸 %d 只（剩余 %d）｜屍群等级 %d%s%s%s%s"
+            "遭遇丧尸 %d 只（剩余 %d）｜屍群等级 %d%s%s%s%s%s"
             % (pending["zombies_count"], pending["zombies_left"],
                pending["zombies_level"],
                "｜校车+车辆铠甲：强化骰全降级为普通骰" if bus_downgrade else "",
                "｜禁药剂" if pending["no_meds"] else "",
                "｜禁逃跑" if pending["no_flee"] else "",
-               "｜远程咬伤会增敌" if pending["ranged_bite_adds_zombie"] else ""),
+               "｜远程咬伤会增敌" if pending["ranged_bite_adds_zombie"] else "",
+               resources),
             title="战斗", border_style="red"))
 
     def do_combat(self, engine):
