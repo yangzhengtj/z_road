@@ -17,6 +17,7 @@ from zroad.core.engine import Engine
 from zroad.platforms.desktop_rich.app import GameApp
 from zroad.platforms.desktop_rich import app as appmod
 from zroad.platforms.desktop_rich.save_store import SaveStore
+from zroad.platforms.desktop_rich.records_store import RecordsStore
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -27,6 +28,7 @@ def app(tmp_path):
     # 输出全部进内存，存档写临时目录
     a.console = Console(file=io.StringIO(), width=100)
     a.store = SaveStore(save_dir=tmp_path)
+    a.records = RecordsStore(save_dir=tmp_path)  # 历史最佳也写临时目录
     a.console.clear = lambda: None
     a.pause = lambda *x, **k: None
     # 菜单一律选第一个可用项（战斗优先远程、否则近战、进入下一轮、损失第一种资源等）
@@ -60,6 +62,9 @@ def test_app_plays_full_game(app, seed, monkeypatch):
     report = engine.final_report()
     assert engine.is_finished()
     assert "总分" in out and report["rating"]["label"] in out
+    # M6：局后统计四张表与对局回看都渲染了
+    assert "战斗统计（分阶段）" in out
+    assert "资源收支" in out and "骰面分布" in out and "对局回看" in out
     # 轮末自动档确实落盘
     assert app.store.exists("auto")
 

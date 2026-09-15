@@ -23,6 +23,7 @@ from . import deck as deck_mod
 from . import effects as effects_mod
 from . import combat as combat_mod
 from . import scoring as scoring_mod
+from . import statistics as statistics_mod
 from .combat import Combat
 
 
@@ -210,6 +211,8 @@ class Engine:
         if option.bonus > 0:
             gain = self._validate_distribution(resource_dist, option.bonus, paying=False)
             self.state.player.resources.apply_delta(gain)
+            for key, amount in gain.items():  # 资源收入记账（M6 局后收支）
+                self.state.stats["resources_gained"][key] += amount
         # 2) 选前支付 N 个任意资源，不足时禁止选择（状态保持 planning）
         if option.cost > 0:
             if not self.path_is_affordable(option):
@@ -218,6 +221,8 @@ class Engine:
             payment = self._validate_distribution(resource_dist, option.cost, paying=True)
             cost_delta = {k: -v for k, v in payment.items()}
             self.state.player.resources.apply_delta(cost_delta)
+            for key, amount in payment.items():  # 选路代价计入资源支出
+                self.state.stats["resources_spent"][key] += amount
 
         # 3) 中选的两张进入遭遇队列（M3 逐张结算）；其余四张弃置
         chosen_ids = list(option.card_ids)
@@ -325,6 +330,8 @@ class Engine:
                 killed = card["zombies"]["count"]
                 self.state.stats["zombies_killed"] += killed
                 self.state.stats["combats"] += 1
+                self._add_stage_stat(str(card["stage"]),
+                                     zombies_killed=killed, combats=1)
                 outcome["effect"] = {"logs": ["狂热者引爆炸药，丧尸全灭，跳过战斗"],
                                      "item_consumed": spec["item"]}
                 self._win_card(card_id)
@@ -343,6 +350,11 @@ class Engine:
         effect_result = effects_mod.resolve_immediate(
             spec, player, self.rng, self.state.stats, decision)
         outcome["effect"] = effect_result
+        # 事件造成的幸存者损失计入所属阶段（战斗内损失由 Combat 记账）
+        event_lost = -min(0, effect_result.get("survivors_delta", 0))
+        if event_lost:
+            self._add_stage_stat(str(card["stage"]),
+                                 survivors_lost=event_lost)
 
         # ④ 是否还有战斗：有丧尸则挂起战斗，且【不推进队列】（等战斗收口）；
         #    事件已导致全灭则不再开打、也不赢得本卡；无战斗则赢得并推进
@@ -362,14 +374,27 @@ class Engine:
 
     def _build_pending_combat(self, card, mod_kinds):
         """把一张战斗牌整理成挂起战斗状态（combat.new_combat_state），并建控制器。"""
+        stage = str(card["stage"])
         pending = combat_mod.new_combat_state(
             card["id"], card["zombies"]["count"], card["zombies"]["level"],
             mod_kinds)
         self.state.pending_combat = pending
         self.state.stats["combats"] += 1
+        self.state.stats["by_stage"][stage]["combats"] += 1
         self._combat = Combat(self.state.player, pending, self.rng,
-                              self.state.stats, self.config["combat"])
+                              self.state.stats, self.config["combat"],
+                              stage=stage)
         return pending
+
+    def _add_stage_stat(self, stage, **deltas):
+        """给某阶段的统计桶累加（M6 分阶段局后统计）。"""
+        if stage is None:
+            return
+        bucket = self.state.stats["by_stage"].setdefault(
+            stage, {"zombies_killed": 0, "survivors_lost": 0,
+                    "combats": 0, "fled": 0})
+        for key, value in deltas.items():
+            bucket[key] = bucket.get(key, 0) + value
 
     # ---------- M4：战斗驱动（前端按顺序调用） ----------
     def combat(self):
@@ -377,9 +402,12 @@ class Engine:
         if self.state.pending_combat is None:
             raise EngineError("当前没有挂起的战斗")
         if self._combat is None:
+            card_id = self.state.pending_combat["card_id"]
+            card = self.catalog.get(card_id)
+            stage = str(card["stage"]) if card is not None else None
             self._combat = Combat(self.state.player, self.state.pending_combat,
                                   self.rng, self.state.stats,
-                                  self.config["combat"])
+                                  self.config["combat"], stage=stage)
         return self._combat
 
     def combat_actions(self):
@@ -474,6 +502,16 @@ class Engine:
         """终局分数明细与评级（仅在 finished 时有意义）。"""
         return scoring_mod.final_report(self.state.player, self.catalog,
                                         self.config["scoring"])
+
+    def statistics_summary(self):
+        """局后统计汇总（M6）：总览/分阶段/资源收支/骰面分布/对局回看。
+
+        用 config 里的开局资源做账面恒等式校验（终局=初始+获得-支出）。
+        """
+        init_cfg = self.setup_cfg["initial_state"]
+        initial = Resources(init_cfg["ammo"], init_cfg["gas"], init_cfg["meds"])
+        return statistics_mod.summarize(self.state, self.catalog,
+                                        initial_resources=initial)
 
     def current_score(self):
         """对局进行中的累计得分（已赢卡牌分 + 事件额外分；套装分终局才计）。"""

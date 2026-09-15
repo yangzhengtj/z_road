@@ -238,6 +238,12 @@ class GameState:
         self.round_log = []
 
     @staticmethod
+    def _empty_stage_stats():
+        """单个阶段的零值统计（M6 局后统计按阶段拆分用）。"""
+        return {"zombies_killed": 0, "survivors_lost": 0,
+                "combats": 0, "fled": 0}
+
+    @staticmethod
     def _empty_stats():
         """新建一份零值统计（键名固定，便于序列化与局后汇总）。"""
         return {
@@ -250,6 +256,10 @@ class GameState:
             # 两种骰子各面值出现次数（事件掷骰与 M4 战斗掷骰都记）
             "dice_faces": {"normal": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0},
                            "enhanced": {1: 0, 2: 0, 3: 0, 4: 0, 5: 0, 6: 0}},
+            # 分阶段统计（键为阶段号字符串，JSON 键只能是字符串）
+            "by_stage": {"1": GameState._empty_stage_stats(),
+                         "2": GameState._empty_stage_stats(),
+                         "3": GameState._empty_stage_stats()},
         }
 
     # --- 序列化（存档的基础；要求输出是纯 JSON 类型） ---
@@ -296,6 +306,13 @@ class GameState:
             for face in list(kind_faces.keys()):
                 if isinstance(face, str) and face.isdigit():
                     kind_faces[int(face)] = kind_faces.pop(face)
+        # 旧档没有分阶段桶，补齐零值（v0.7.0 起新增，向前兼容）
+        stage_buckets = stats.setdefault("by_stage", {})
+        for stage_no in ("1", "2", "3"):
+            bucket = stage_buckets.setdefault(
+                stage_no, GameState._empty_stage_stats())
+            for key, zero in GameState._empty_stage_stats().items():
+                bucket.setdefault(key, zero)
         state.stats = stats
         state.rng_state = data.get("rng_state")
         state.round_log = list(data.get("round_log", []))

@@ -170,3 +170,90 @@ def score_report_table(report):
         table.add_row("评级",
                       Text(report["rating"]["label"], style="bold magenta"))
     return table
+
+
+# ===================== M6：局后统计与回看 =====================
+
+def stage_stats_table(summary):
+    """分阶段战斗统计表（末行为合计，合计应与总览一致）。"""
+    table = Table(box=box.SIMPLE_HEAVY, title="战斗统计（分阶段）")
+    table.add_column("阶段", style="cyan")
+    table.add_column("战斗场次", justify="right")
+    table.add_column("击杀丧尸", justify="right")
+    table.add_column("损失队友", justify="right")
+    table.add_column("逃跑次数", justify="right")
+    for row in summary["by_stage"]["rows"]:
+        table.add_row(STAGE_NAMES.get(row["stage"], str(row["stage"])),
+                      str(row["combats"]), str(row["zombies_killed"]),
+                      str(row["survivors_lost"]), str(row["fled"]))
+    total = summary["by_stage"]["total"]
+    table.add_row(Text("合计", style="bold"),
+                  Text(str(total["combats"]), style="bold"),
+                  Text(str(total["zombies_killed"]), style="bold"),
+                  Text(str(total["survivors_lost"]), style="bold"),
+                  Text(str(total["fled"]), style="bold"))
+    return table
+
+
+def resource_ledger_table(ledger):
+    """资源收支表：获得 / 支出 / 净变化（账面恒等由 core 测试守护）。"""
+    table = Table(box=box.SIMPLE_HEAVY, title="资源收支")
+    table.add_column("资源", style="cyan")
+    table.add_column("获得", justify="right")
+    table.add_column("支出", justify="right")
+    table.add_column("净变化", justify="right")
+    for row in ledger:
+        net = row["net"]
+        net_text = Text(("%+d" % net), style="green" if net >= 0 else "red")
+        table.add_row(row["name"], str(row["gained"]),
+                      str(row["spent"]), net_text)
+    return table
+
+
+def dice_distribution_table(dice):
+    """骰面分布表：普通骰/强化骰各骰面出现次数。"""
+    kind_label = {"normal": "普通骰", "enhanced": "强化骰"}
+    table = Table(box=box.SIMPLE_HEAVY, title="骰面分布（共掷 %d 颗）"
+                                              % dice["total"])
+    table.add_column("骰种", style="cyan")
+    # 六列骰面：名称（点数）
+    for face_no in range(1, 7):
+        table.add_column("%d" % face_no, justify="right")
+    table.add_column("小计", justify="right")
+    for kind in ("normal", "enhanced"):
+        block = dice[kind]
+        cells = ["%s·%s" % (f["name"], f["count"]) for f in block["faces"]]
+        table.add_row(kind_label[kind], *(cells + [str(block["total"])]))
+    return table
+
+
+def replay_table(rounds):
+    """对局回看：每轮选了哪条路、打了哪两张卡。"""
+    table = Table(box=box.SIMPLE, title="对局回看")
+    table.add_column("轮", justify="right", style="dim")
+    table.add_column("阶段", style="cyan")
+    table.add_column("路径", justify="right")
+    table.add_column("遭遇卡牌")
+    for r in rounds:
+        cards_text = "、".join(c["id"] for c in r["chosen_cards"])
+        table.add_row(str(r["round"]), STAGE_NAMES.get(r["stage"], str(r["stage"])),
+                      "路径%d" % r["chosen_path"], cards_text)
+    return table
+
+
+HELP_LINES = [
+    "[bold]亡命之途·文字版 操作帮助[/bold]",
+    "主菜单：n 新游戏（先选难度 e 简单/h 困难）｜l 读取存档｜h 帮助｜q 退出",
+    "规划阶段：1/2/3 选择对应路径；2L/2R、3L/3R 查看该路径明牌详情",
+    "遭遇阶段：回车逐张结算卡牌（拾荒→事件→战斗）",
+    "战斗：r 远程攻击（每场一次、仅近战前）｜f 逃跑（仅近战前）｜m 近战",
+    "      近战一旦开始，本场只能继续近战；药剂机会按提示输入骰号使用",
+    "轮末：c 下一轮（自动存档）｜s 存手动槽｜q 存盘回主菜单",
+    "规则要点：每阶段牌库随机剔 4 张；每轮 6 张组 3 路径选 1 弃 4；",
+    "          校车+车辆铠甲同时持有，屍群强化骰才全部降级为普通骰。",
+]
+
+
+def help_panel():
+    """主菜单帮助面板（静态文本）。"""
+    return Panel("\n".join(HELP_LINES), border_style="magenta", title="帮助")

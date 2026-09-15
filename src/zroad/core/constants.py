@@ -12,6 +12,8 @@ RESOURCE_AMMO = "ammo"   # 弹药（实体书：彈藥）
 RESOURCE_GAS = "gas"     # 汽油（实体书：汽油）
 RESOURCE_MEDS = "meds"   # 药剂（实体书：腎上腺素，用户改编版称 X 药剂）
 RESOURCE_KEYS = (RESOURCE_AMMO, RESOURCE_GAS, RESOURCE_MEDS)
+# 资源键 → 中文名（core 层也有一份，供局后统计等无 UI 场景使用）
+RES_NAMES_CN = {RESOURCE_AMMO: "弹药", RESOURCE_GAS: "汽油", RESOURCE_MEDS: "药剂"}
 
 # ---- 三个阶段 ----
 STAGE_I = 1
@@ -25,6 +27,7 @@ FACE_DOWN = "down"
 # ---- 两种骰子（键名与 dice.json 保持一致） ----
 DICE_NORMAL = "normal"      # 普通骰（实体书：黑色骰）
 DICE_ENHANCED = "enhanced"  # 强化骰（实体书：红色屍群骰）
+DICE_KINDS = (DICE_NORMAL, DICE_ENHANCED)
 
 # ---- 骰面名称（与 dice.json 的 name 字段、config.json 的 face_costs 对应） ----
 FACE_BLANK = "空白"

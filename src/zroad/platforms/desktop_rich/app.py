@@ -20,8 +20,6 @@ from pathlib import Path
 from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
-from rich import box
-from rich.table import Table
 
 from zroad.core.engine import Engine
 from zroad.core.model import EngineError
@@ -29,6 +27,7 @@ from zroad.core import effects as fx
 from zroad.core.constants import (NORMAL_FACE_NAMES, RESOURCE_KEYS, ITEM_BUS,
                                   ITEM_VEHICLE_ARMOR)
 from .save_store import (SaveStore, AUTO_SLOT, MANUAL_SLOTS, SLOT_LABELS)
+from .records_store import RecordsStore
 from . import render
 
 # 仓库根与数据目录（本文件位于 src/zroad/platforms/desktop_rich/，上溯 4 级）
@@ -49,6 +48,7 @@ class GameApp(object):
     def __init__(self):
         self.console = Console()
         self.store = SaveStore()
+        self.records = RecordsStore()  # 跨对局历史最佳
         self.cards, self.config = load_game_data()
         self.catalog = {c["id"]: c for c in self.cards}
         self.total_rounds = self.config["setup"]["total_rounds"]
@@ -126,7 +126,7 @@ class GameApp(object):
 
     # ---------- 主菜单 ----------
     def run(self):
-        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.8",
+        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.7.0",
                                      border_style="magenta"))
         while True:
             try:
@@ -135,6 +135,7 @@ class GameApp(object):
                     ("n", "新游戏（n）", True),
                     ("c", "继续自动存档（c）", auto_ok),
                     ("l", "读取存档（l）", True),
+                    ("h", "帮助（h）", True),
                     ("q", "退出（q）", True),
                 ])
                 if choice == "n":
@@ -143,6 +144,9 @@ class GameApp(object):
                     self.load_slot(AUTO_SLOT)
                 elif choice == "l":
                     self.load_menu()
+                elif choice == "h":
+                    self.console.print(render.help_panel())
+                    self.pause()
                 else:
                     self.console.print("再会，路上小心。")
                     return
@@ -483,23 +487,43 @@ class GameApp(object):
     def show_final(self, engine):
         self.console.clear()
         report = engine.final_report()
-        player = engine.state.player
+        summary = engine.statistics_summary()
         if report["eliminated"]:
             self.console.print(Panel("[bold red]队伍全灭，旅程在此终结……[/bold red]",
                                      border_style="red"))
         else:
             self.console.print(Panel("[bold green]你抵达了终点！[/bold green]",
                                      border_style="green"))
+        # 1) 计分与评级
         self.console.print(render.score_report_table(report))
-        stats = engine.state.stats
-        stat_table = Table(box=box.SIMPLE)
-        stat_table.add_column("局后统计", style="cyan")
-        stat_table.add_column("数值", justify="right")
-        stat_table.add_row("战斗场次", str(stats["combats"]))
-        stat_table.add_row("击杀丧尸", str(stats["zombies_killed"]))
-        stat_table.add_row("损失幸存者", str(stats["survivors_lost"]))
-        stat_table.add_row("逃跑次数", str(stats["fled"]))
-        self.console.print(stat_table)
+        # 2) 历史最佳（只统计通关局；全灭不参与）
+        rating_label = report["rating"]["label"] if report.get("rating") else ""
+        updated, best = self.records.record_result(
+            report["total"], rating_label=rating_label,
+            difficulty=engine.state.difficulty,
+            eliminated=report["eliminated"], seed=engine.state.seed)
+        if best is not None:
+            diff_label = self.config["solo_paths"]["difficulties"].get(
+                best.get("difficulty", "easy"), {}).get("label", "")
+            if updated:
+                self.console.print(Panel(
+                    "[bold yellow]新纪录！历史最佳 %d 分（%s·%s）[/bold yellow]"
+                    % (best["score"], diff_label, best["rating_label"]),
+                    border_style="yellow"))
+            else:
+                self.console.print("[dim]历史最佳：%d 分（%s·%s，%s）[/dim]"
+                                   % (best["score"], diff_label,
+                                      best["rating_label"],
+                                      best.get("finished_at", "")))
+        # 3) 分阶段战斗统计
+        self.console.print(render.stage_stats_table(summary))
+        # 4) 资源收支
+        self.console.print(render.resource_ledger_table(
+            summary["resource_ledger"]))
+        # 5) 骰面分布
+        self.console.print(render.dice_distribution_table(summary["dice"]))
+        # 6) 对局回看
+        self.console.print(render.replay_table(summary["rounds"]))
         self.store.write(AUTO_SLOT, engine)  # 终局也落盘，便于回看
         self.pause("按回车回到主菜单…")
 

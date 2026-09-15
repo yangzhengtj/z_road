@@ -74,12 +74,14 @@ def new_combat_state(card_id, zombies_count, zombies_level, mod_kinds=None):
 class Combat(object):
     """单场战斗状态机。绑定玩家、战斗状态 dict、随机源与局内统计。"""
 
-    def __init__(self, player, state, rng, stats, combat_cfg):
+    def __init__(self, player, state, rng, stats, combat_cfg, stage=None):
         self.player = player
         self.state = state
         self.rng = rng
         self.stats = stats
         self.cfg = combat_cfg
+        # 本场所属阶段（"1"/"2"/"3"），用于 M6 分阶段统计；旧调用缺省为 None
+        self.stage_no = stage
         # 远程/逃跑的花费与骰数从 config 取，不写死
         ra = combat_cfg["ranged_attack"]
         self._ammo_per_burst = ra["ammo_per_burst"]
@@ -115,6 +117,16 @@ class Combat(object):
     def _spend(self, key, amount):
         self.player.resources.apply_delta({key: -amount})
         self.stats["resources_spent"][key] += amount
+
+    def _add_stage_stat(self, **deltas):
+        """本战斗的增量计入所属阶段桶（缺阶段信息时跳过，不影响总数）。"""
+        if self.stage_no is None:
+            return
+        bucket = self.stats["by_stage"].setdefault(
+            self.stage_no, {"zombies_killed": 0, "survivors_lost": 0,
+                            "combats": 0, "fled": 0})
+        for key, value in deltas.items():
+            bucket[key] = bucket.get(key, 0) + value
 
     # ---------- 1. 近战前行动 ----------
     def available_actions(self):
@@ -167,6 +179,7 @@ class Combat(object):
         kills = min(kills, self.state["zombies_left"])
         self.state["zombies_left"] += added - kills
         self.stats["zombies_killed"] += kills
+        self._add_stage_stat(zombies_killed=kills)
 
         result = {"action": "ranged", "faces": list(faces), "kills": kills,
                   "zombies_added": added, "zombies_left": self.state["zombies_left"]}
@@ -187,6 +200,7 @@ class Combat(object):
             raise EngineError("汽油不足，无法逃跑")
         self._spend("gas", self._flee_gas)
         self.stats["fled"] += 1
+        self._add_stage_stat(fled=1)
         self._finish(RESULT_FLED)
         return {"action": "flee", "gas_cost": self._flee_gas,
                 "result": RESULT_FLED}
@@ -308,6 +322,7 @@ class Combat(object):
         self.stats["zombies_killed"] += kills
         actual_loss = self.player.lose_survivors(losses)
         self.stats["survivors_lost"] += actual_loss
+        self._add_stage_stat(zombies_killed=kills, survivors_lost=actual_loss)
 
         outcome = {"action": "melee", "entries": list(entries), "kills": kills,
                    "survivors_lost": actual_loss,
