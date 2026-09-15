@@ -108,12 +108,23 @@ def test_config_setup_arithmetic(config):
 
 
 def test_config_solo_paths(config):
-    """单人三路径：明暗为 暗暗/明暗/明明，奖惩为 +2/0/-2。"""
-    paths = config["solo_paths"]["paths"]
-    assert [(p["first_card"], p["second_card"]) for p in paths] == \
-        [("down", "down"), ("up", "down"), ("up", "up")]
-    assert [p["bonus_any_resources"] for p in paths] == [2, 0, 0]
-    assert [p["cost_any_resources"] for p in paths] == [0, 0, 2]
+    """两档难度的三路径明暗都为 暗暗/明暗/明明，奖惩数值符合规则定义。"""
+    solo = config["solo_paths"]
+    assert solo["default_difficulty"] == "easy"
+    assert set(solo["difficulties"]) == {"easy", "hard"}
+    for diff in ("easy", "hard"):
+        paths = solo["difficulties"][diff]["paths"]
+        assert len(paths) == 3
+        assert [(p["first_card"], p["second_card"]) for p in paths] == \
+            [("down", "down"), ("up", "down"), ("up", "up")]
+    easy = solo["difficulties"]["easy"]["paths"]
+    hard = solo["difficulties"]["hard"]["paths"]
+    # 简单（原规则）：路径1 +2，路径2 无，路径3 -2
+    assert [p["bonus_any_resources"] for p in easy] == [2, 0, 0]
+    assert [p["cost_any_resources"] for p in easy] == [0, 0, 2]
+    # 困难：路径1 无奖惩，路径2 -1，路径3 -2
+    assert [p["bonus_any_resources"] for p in hard] == [0, 0, 0]
+    assert [p["cost_any_resources"] for p in hard] == [0, 1, 2]
 
 
 def test_config_rating_bands_cover_all_scores(config):

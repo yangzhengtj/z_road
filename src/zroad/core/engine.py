@@ -16,7 +16,7 @@ M2 覆盖的主循环（★为本次实现，☆为后续里程碑接入）：
 
 from .constants import (RESOURCE_KEYS, PHASE_INIT, PHASE_PLANNING,
                         PHASE_ENCOUNTER, PHASE_ROUND_END, PHASE_FINISHED,
-                        MODE_SOLO)
+                        MODE_SOLO, DIFFICULTY_EASY)
 from .rng import SeededRng
 from .model import GameState, PlayerState, Resources, EngineError
 from . import deck as deck_mod
@@ -48,18 +48,51 @@ class Engine:
         # 当前战斗控制器（Combat 实例）；不在战斗中为 None，读档后惰性重建
         self._combat = None
 
+    @staticmethod
+    def _resolve_difficulty(config, difficulty):
+        """校验并归一难度键：未指定时取配置默认值，再缺省为简单；非法值直接报错。"""
+        solo_cfg = config["solo_paths"]
+        diffs = solo_cfg.get("difficulties", {})
+        if difficulty is None:
+            difficulty = solo_cfg.get("default_difficulty", DIFFICULTY_EASY)
+        if difficulty not in diffs:
+            raise EngineError("未知难度：%r，可选 %s"
+                              % (difficulty, sorted(diffs.keys())))
+        return difficulty
+
+    def _solo_paths_view(self):
+        """返回当前难度对应的 solo_paths 配置视图（deck 只认里面的 paths）。
+
+        难度只在“摆出路径”时读取一次，奖惩值随后固化进 PathOption，
+        因此一局中途切换难度不会影响已经摆出的路径，读档续局也完全一致。
+        """
+        diffs = self.solo_cfg["difficulties"]
+        difficulty = self.state.difficulty or DIFFICULTY_EASY
+        view = dict(self.solo_cfg)  # 浅拷贝，保留 cards_per_path 等其它键
+        view["paths"] = diffs[difficulty]["paths"]
+        return view
+
+    def difficulty_label(self):
+        """当前难度的中文名（供界面展示）。"""
+        diffs = self.solo_cfg.get("difficulties", {})
+        entry = diffs.get(self.state.difficulty or DIFFICULTY_EASY)
+        return entry["label"] if entry else str(self.state.difficulty)
+
     # ---------- 建局 / 读档 ----------
     @classmethod
-    def new_solo(cls, cards, config, seed=None, ui=None):
+    def new_solo(cls, cards, config, seed=None, ui=None, difficulty=None):
         """创建并开始一局单人游戏，返回处于第一轮 planning 的引擎。
 
         参数:
             cards: cards.json 的列表（也兼容 {id:card}）；
-            seed: 随机种子，传入整数可复现整局；None 为真随机。
+            seed: 随机种子，传入整数可复现整局；None 为真随机；
+            difficulty: 难度键 "easy"/"hard"，None 时取
+                config.solo_paths.default_difficulty（再缺省为简单）。
         """
         catalog = cards if isinstance(cards, dict) else {c["id"]: c for c in cards}
         rng = SeededRng(seed)
-        state = GameState(mode=MODE_SOLO, seed=seed)
+        difficulty = cls._resolve_difficulty(config, difficulty)
+        state = GameState(mode=MODE_SOLO, seed=seed, difficulty=difficulty)
 
         # 初始人员与资源（数字来自 config，不在代码里写死）
         init_cfg = config["setup"]["initial_state"]
@@ -114,7 +147,7 @@ class Engine:
         drawn = deck_mod.draw_from_stage(
             self.state.stage_decks[stage],
             self.setup_cfg["solo_cards_per_round"])
-        options = deck_mod.make_solo_options(drawn, self.solo_cfg)
+        options = deck_mod.make_solo_options(drawn, self._solo_paths_view())
         self.state.current_options = options
         self.state.encounter_queue = []
         self.state.encounter_index = 0
@@ -149,7 +182,10 @@ class Engine:
         return normalized
 
     def path_is_affordable(self, option):
-        """路径三的前置判断：总资源是否够付代价（供前端置灰选项）。"""
+        """选路前置判断：总资源是否够付该路径代价（供前端置灰选项）。
+
+        简单难度只有路径三有代价；困难难度路径二（1）、路径三（2）都有代价。
+        """
         if option.cost <= 0:
             return True
         return self.state.player.resources.total() >= option.cost
@@ -159,10 +195,9 @@ class Engine:
 
         参数:
             path_index: 路径序号 1/2/3；
-            resource_dist: 涉及“任意资源”时的分配方案，
-                选路径一（奖励 2）时必填，如 {"ammo":2}；
-                选路径三（代价 2）时必填，如 {"gas":1,"meds":1}；
-                路径二传 None。
+            resource_dist: 涉及“任意资源”时的分配方案（奖惩数量来自所选路径，
+                随难度不同：简单 路径1奖2/路径3付2；困难 路径2付1/路径3付2），
+                如 {"ammo":2}；既无奖励也无代价时传 None。
         返回:
             被选中的 PathOption。
         """
@@ -171,14 +206,15 @@ class Engine:
                               % self.state.phase)
         option = self._find_option(path_index)
 
-        # 1) 路径一：选前获得 N 个任意资源
+        # 1) 选前获得 N 个任意资源（简单难度路径一）
         if option.bonus > 0:
             gain = self._validate_distribution(resource_dist, option.bonus, paying=False)
             self.state.player.resources.apply_delta(gain)
-        # 2) 路径三：选前支付 N 个任意资源，不足时禁止选择（状态保持 planning）
+        # 2) 选前支付 N 个任意资源，不足时禁止选择（状态保持 planning）
         if option.cost > 0:
             if not self.path_is_affordable(option):
-                raise EngineError("资源总数不足 %d，无法选择路径三" % option.cost)
+                raise EngineError("资源总数不足 %d，无法选择路径%d"
+                                  % (option.cost, option.index))
             payment = self._validate_distribution(resource_dist, option.cost, paying=True)
             cost_delta = {k: -v for k, v in payment.items()}
             self.state.player.resources.apply_delta(cost_delta)

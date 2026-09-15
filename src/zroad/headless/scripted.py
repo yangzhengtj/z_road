@@ -52,12 +52,27 @@ def scripted_fight(engine, use_ranged=True):
     return final
 
 
-def play_full_game(cards, config, seed=None, path_index=2, use_ranged=True):
-    """从建局打到 finished，返回引擎实例（终局用 engine.final_report()）。"""
+def play_full_game(cards, config, seed=None, path_index=2, use_ranged=True,
+                   difficulty=None):
+    """从建局打到 finished，返回引擎实例（终局用 engine.final_report()）。
+
+    difficulty: "easy"/"hard"，None 取配置默认；所选路径若有任意资源奖惩，
+    自动生成一份合法分配（奖励全给第一种资源，代价挑一种库存够的资源付清）。
+    """
     from zroad.core.engine import Engine
-    engine = Engine.new_solo(cards, config, seed=seed)
+    from zroad.core.constants import RESOURCE_KEYS
+    engine = Engine.new_solo(cards, config, seed=seed, difficulty=difficulty)
     while not engine.is_finished():
-        engine.choose_path(path_index)
+        opt = engine._find_option(path_index)
+        dist = None
+        if opt.bonus:  # 奖励：全部给第一种资源
+            dist = {k: (opt.bonus if i == 0 else 0)
+                    for i, k in enumerate(RESOURCE_KEYS)}
+        elif opt.cost:  # 代价：找一种持有量足够的资源一次付清
+            res = engine.state.player.resources
+            pay_key = next(k for k in RESOURCE_KEYS if res.get(k) >= opt.cost)
+            dist = {k: (opt.cost if k == pay_key else 0) for k in RESOURCE_KEYS}
+        engine.choose_path(path_index, dist)
         while engine.state.phase == "encounter":
             decision = scripted_effect_decision(engine)
             outcome = engine.begin_card_resolution(decision)

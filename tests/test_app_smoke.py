@@ -85,3 +85,15 @@ def test_app_inspect_face_up_card(app, monkeypatch):
     app.do_planning(engine)
     out = app.console.file.getvalue()
     assert "卡牌详情" in out and engine.state.phase == "encounter"
+
+
+def test_app_hard_difficulty_path2_costs_one(app, monkeypatch):
+    """困难难度：路径2 选前支付 1 个任意资源（分配全落到最后一种资源药剂）。"""
+    monkeypatch.setattr(app, "_ask_int", _auto_int)  # 每类先问 0，最后一种自动补齐 1
+    monkeypatch.setattr(appmod.Prompt, "ask", _scripted_prompt("2"))
+    engine = Engine.new_solo(app.cards, app.config, seed=1, difficulty="hard")
+    before = engine.state.player.resources.meds
+    app.do_planning(engine)
+    assert engine.state.phase == "encounter"
+    assert engine.state.player.resources.meds == before - 1
+    assert "难度困难" in app.console.file.getvalue()

@@ -125,7 +125,7 @@ class GameApp(object):
 
     # ---------- 主菜单 ----------
     def run(self):
-        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.3",
+        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.4",
                                      border_style="magenta"))
         while True:
             try:
@@ -150,6 +150,14 @@ class GameApp(object):
                 continue
 
     def new_game(self):
+        # 先选难度：简单（e，原规则）/ 困难（h，路径1无奖励且路径2也要付1）
+        diff_cfg = self.config["solo_paths"]["difficulties"]
+        diff_choice = self.ask_menu("选择难度", [
+            ("e", "简单（e）：路径1 选前 +2 任意资源，路径2 无奖惩，路径3 -2", True),
+            ("h", "困难（h）：路径1 无奖惩，路径2 -1 任意资源，路径3 -2", True),
+        ])
+        difficulty = {"e": "easy", "h": "hard"}[diff_choice]
+        self.console.print("[dim]本局难度：%s[/dim]" % diff_cfg[difficulty]["label"])
         raw = Prompt.ask("输入随机种子（整数，可复现；直接回车为随机）",
                          default="")
         seed = None
@@ -158,7 +166,8 @@ class GameApp(object):
                 seed = int(raw.strip())
             except ValueError:
                 self.console.print("[yellow]种子不是整数，改用随机[/yellow]")
-        engine = Engine.new_solo(self.cards, self.config, seed=seed)
+        engine = Engine.new_solo(self.cards, self.config, seed=seed,
+                                 difficulty=difficulty)
         self.play(engine)
 
     def load_menu(self):
@@ -172,9 +181,11 @@ class GameApp(object):
             key = key_map[p["slot"]]
             slot_by_key[key] = p["slot"]
             finished = p["phase"] == "finished"
-            label = "%s（%s）｜第%d轮 ｜ %d人 ｜ 已赢%d张 ｜ %s%s" % (
-                p["label"], key, p["round_no"], p["survivors"], p["won_count"],
-                p["saved_at"], "（已结算）" if finished else "")
+            diff_label = self.config["solo_paths"]["difficulties"].get(
+                p.get("difficulty", "easy"), {}).get("label", "")
+            label = "%s（%s）｜难度%s ｜第%d轮 ｜ %d人 ｜ 已赢%d张 ｜ %s%s" % (
+                p["label"], key, diff_label, p["round_no"], p["survivors"],
+                p["won_count"], p["saved_at"], "（已结算）" if finished else "")
             options.append((key, label, not finished))
         options.append(("b", "返回主菜单（b）", True))
         choice = self.ask_menu("选择存档", options)
@@ -204,7 +215,8 @@ class GameApp(object):
         self.console.clear()
         self.console.print(render.status_panel(
             player, engine.state.round_no, engine.current_stage(),
-            self.total_rounds, score=engine.current_score()))
+            self.total_rounds, score=engine.current_score(),
+            difficulty_label=engine.difficulty_label()))
         options = engine.state.current_options
         flags = {opt.index: engine.path_is_affordable(opt) for opt in options}
         while True:
@@ -218,22 +230,28 @@ class GameApp(object):
                 self._inspect_path_card(options, int(command[0]),
                                         0 if command[1] == "L" else 1)
                 continue
-            # 2) 选定路径
+            # 2) 选定路径（代价随难度变化，是否可付由 flags 统一判断）
             if command in ("1", "2", "3"):
                 path_index = int(command)
-                if path_index == 3 and not flags.get(3, True):
-                    self.console.print("[red]总资源不足 2，路径三不可选[/red]")
+                if not flags.get(path_index, True):
+                    cost = options[path_index - 1].cost
+                    self.console.print(
+                        "[red]总资源不足 %d，路径%d 不可选[/red]"
+                        % (cost, path_index))
                     continue
                 break
             self.console.print("[yellow]无法识别的输入，请输入 1/2/3 或 2L/3R 这类命令[/yellow]")
 
         option = engine._find_option(path_index)
+        cn_num = {1: "一", 2: "二", 3: "三"}[option.index]
         dist = None
         if option.bonus > 0:
-            self.console.print("[green]路径一奖励：领取 2 个任意资源[/green]")
+            self.console.print("[green]路径%s奖励：领取 %d 个任意资源[/green]"
+                               % (cn_num, option.bonus))
             dist = self.ask_distribution(option.bonus, player, paying=False)
         elif option.cost > 0:
-            self.console.print("[yellow]路径三代价：支付 2 个任意资源[/yellow]")
+            self.console.print("[yellow]路径%s代价：支付 %d 个任意资源[/yellow]"
+                               % (cn_num, option.cost))
             dist = self.ask_distribution(option.cost, player, paying=True)
         engine.choose_path(path_index, dist)
 
@@ -290,7 +308,8 @@ class GameApp(object):
         self.console.clear()
         self.console.print(render.status_panel(
             player, engine.state.round_no, engine.current_stage(),
-            self.total_rounds, score=engine.current_score()))
+            self.total_rounds, score=engine.current_score(),
+            difficulty_label=engine.difficulty_label()))
         self.console.print(render.card_panel(card, title="遭遇卡 %s" % card_id))
         self.pause("查看卡面后按回车结算…")
 

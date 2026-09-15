@@ -240,3 +240,60 @@ def test_snapshot_restore_continues_identically(cards, config):
     play_scripted(restored, 4, 8)
 
     assert restored.snapshot() == engine_a.snapshot()
+
+
+# ---------- 8. 难度设置（v0.6.4：简单=原规则，困难调整路径奖惩） ----------
+def test_default_difficulty_is_easy(cards, config):
+    engine = Engine.new_solo(cards, config, seed=1)
+    assert engine.state.difficulty == "easy"
+    opts = {o.index: o for o in engine.state.current_options}
+    assert opts[1].bonus == 2 and opts[2].cost == 0 and opts[3].cost == 2
+
+
+def test_hard_difficulty_path_effects(cards, config):
+    engine = Engine.new_solo(cards, config, seed=1, difficulty="hard")
+    opts = {o.index: o for o in engine.state.current_options}
+    # 困难：路径1无奖惩、路径2付1、路径3付2
+    assert opts[1].bonus == 0 and opts[1].cost == 0
+    assert opts[2].cost == 1 and opts[3].cost == 2
+    before = engine.state.player.resources.gas
+    engine.choose_path(2, {"ammo": 0, "gas": 1, "meds": 0})
+    assert engine.state.player.resources.gas == before - 1
+
+
+def test_hard_difficulty_path1_no_bonus(cards, config):
+    engine = Engine.new_solo(cards, config, seed=1, difficulty="hard")
+    res = engine.state.player.resources
+    before = (res.ammo, res.gas, res.meds)
+    engine.choose_path(1)  # 困难路径1无奖惩，也不需要资源分配
+    after = (res.ammo, res.gas, res.meds)
+    assert before == after
+
+
+def test_hard_difficulty_path2_blocked_when_empty(cards, config):
+    engine = Engine.new_solo(cards, config, seed=1, difficulty="hard")
+    res = engine.state.player.resources
+    res.ammo, res.gas, res.meds = 0, 0, 0
+    assert engine.path_is_affordable(engine._find_option(2)) is False
+    with pytest.raises(EngineError):
+        engine.choose_path(2, {"gas": 1})
+    assert engine.state.phase == PHASE_PLANNING
+
+
+def test_invalid_difficulty_rejected(cards, config):
+    with pytest.raises(EngineError):
+        Engine.new_solo(cards, config, difficulty="nightmare")
+
+
+def test_difficulty_survives_save_and_next_rounds(cards, config):
+    engine = Engine.new_solo(cards, config, seed=3, difficulty="hard")
+    json.dumps(engine.snapshot(), ensure_ascii=False)  # 难度可序列化
+    restored = Engine.restore(cards, config, engine.snapshot())
+    assert restored.state.difficulty == "hard"
+    # 打完第一轮，后续轮次摆出的仍是困难数值
+    restored.choose_path(2, {"ammo": 1, "gas": 0, "meds": 0})
+    restored.consume_encounter_card()
+    restored.consume_encounter_card()
+    restored.close_round()
+    opts = {o.index: o for o in restored.state.current_options}
+    assert opts[2].cost == 1 and opts[1].bonus == 0

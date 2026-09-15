@@ -12,7 +12,7 @@
 """
 
 from .constants import (RESOURCE_AMMO, RESOURCE_GAS, RESOURCE_MEDS, RESOURCE_KEYS,
-                        PHASE_INIT, MODE_SOLO)
+                        PHASE_INIT, MODE_SOLO, DIFFICULTY_EASY)
 
 
 class EngineError(ValueError):
@@ -207,9 +207,11 @@ class GameState:
     发牌就是 pop(0)。分阶段存放是为了严格保证“跨阶段不混洗”。
     """
 
-    def __init__(self, mode=MODE_SOLO, seed=None):
+    def __init__(self, mode=MODE_SOLO, seed=None, difficulty=None):
         self.mode = mode
         self.seed = seed
+        # 单人难度 easy/hard（只影响路径奖惩；旧存档没有该字段时按 easy 处理）
+        self.difficulty = difficulty
         self.phase = PHASE_INIT
         # 当前轮次，从 1 开始；尚未开局为 0；全部结束为 total_rounds+1
         self.round_no = 0
@@ -255,6 +257,7 @@ class GameState:
         return {
             "mode": self.mode,
             "seed": self.seed,
+            "difficulty": self.difficulty,
             "phase": self.phase,
             "round_no": self.round_no,
             "stage_decks": {str(k): list(v) for k, v in self.stage_decks.items()},
@@ -274,6 +277,8 @@ class GameState:
     def from_dict(cls, data):
         state = cls(mode=data["mode"], seed=data.get("seed"))
         state.phase = data["phase"]
+        # 旧存档没有难度字段，按简单难度（原规则）兼容
+        state.difficulty = data.get("difficulty") or DIFFICULTY_EASY
         state.round_no = data["round_no"]
         # JSON 的键只能是字符串，读回时转回 int 阶段号
         state.stage_decks = {int(k): list(v) for k, v in data["stage_decks"].items()}

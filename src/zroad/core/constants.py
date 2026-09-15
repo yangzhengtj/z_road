@@ -61,6 +61,10 @@ SPECIAL_ITEMS = (ITEM_SNIPER, ITEM_MAP, ITEM_BUS,
 MODE_SOLO = "solo"   # 单人 SOLO（阶段 1）
 MODE_DUEL = "duel"   # 两人热座（阶段 3）
 
+# ---- 单人难度（只影响规划阶段三条路径的资源奖惩，config.solo_paths 配置数值） ----
+DIFFICULTY_EASY = "easy"   # 简单：路径1 +2 / 路径2 0 / 路径3 -2（原规则）
+DIFFICULTY_HARD = "hard"   # 困难：路径1 0 / 路径2 -1 / 路径3 -2
+
 # ---- 引擎状态机的阶段（GameState.phase 取值） ----
 PHASE_INIT = "init"            # 已建局、尚未开始第一轮
 PHASE_PLANNING = "planning"    # 规划：三条路径已摆出，等待玩家选路

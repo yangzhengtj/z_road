@@ -85,6 +85,7 @@ class SaveStore(object):
             "saved_at": envelope.get("saved_at", ""),
             "round_no": state.get("round_no", 0),
             "phase": state.get("phase", ""),
+            "difficulty": state.get("difficulty", "easy"),
             "survivors": player.get("survivors", 0),
             "won_count": len(player.get("won_card_ids", [])),
         }

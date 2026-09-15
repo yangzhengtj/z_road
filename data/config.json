@@ -28,12 +28,28 @@
   },
 
   "solo_paths": {
-    "comment": "单人规划阶段三条路径的明暗与奖惩（说明书第 11 页）。up=面朝上可见，down=面朝下未知",
-    "paths": [
-      {"index": 1, "first_card": "down", "second_card": "down", "bonus_any_resources": 2, "cost_any_resources": 0},
-      {"index": 2, "first_card": "up",   "second_card": "down", "bonus_any_resources": 0, "cost_any_resources": 0},
-      {"index": 3, "first_card": "up",   "second_card": "up",   "bonus_any_resources": 0, "cost_any_resources": 2}
-    ],
+    "comment": "单人规划阶段三条路径的明暗与奖惩（说明书第 11 页）。up=面朝上可见，down=面朝下未知。v0.6.4 起按难度区分奖惩：简单=原规则，困难=路径1无奖励、路径2也要支付1",
+    "default_difficulty": "easy",
+    "difficulties": {
+      "easy": {
+        "label": "简单",
+        "comment": "原规则：路径1选前拿2个任意资源，路径2无奖惩，路径3选前付2个任意资源",
+        "paths": [
+          {"index": 1, "first_card": "down", "second_card": "down", "bonus_any_resources": 2, "cost_any_resources": 0},
+          {"index": 2, "first_card": "up",   "second_card": "down", "bonus_any_resources": 0, "cost_any_resources": 0},
+          {"index": 3, "first_card": "up",   "second_card": "up",   "bonus_any_resources": 0, "cost_any_resources": 2}
+        ]
+      },
+      "hard": {
+        "label": "困难",
+        "comment": "路径1无奖惩，路径2选前付1个任意资源，路径3选前付2个任意资源",
+        "paths": [
+          {"index": 1, "first_card": "down", "second_card": "down", "bonus_any_resources": 0, "cost_any_resources": 0},
+          {"index": 2, "first_card": "up",   "second_card": "down", "bonus_any_resources": 0, "cost_any_resources": 1},
+          {"index": 3, "first_card": "up",   "second_card": "up",   "bonus_any_resources": 0, "cost_any_resources": 2}
+        ]
+      }
+    },
     "discard_unselected_paths": true
   },
 

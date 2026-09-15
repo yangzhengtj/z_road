@@ -20,10 +20,14 @@ def resources_text(player):
     return "弹药 %d ｜ 汽油 %d ｜ 药剂 %d" % (r.ammo, r.gas, r.meds)
 
 
-def status_panel(player, round_no, stage, total_rounds=8, score=0):
-    """顶部状态面板：轮次、人数、资源、道具、当前累计得分。"""
-    title = "第 %d/%d 轮 · %s" % (round_no, total_rounds,
-                                  STAGE_NAMES.get(stage, str(stage)))
+def status_panel(player, round_no, stage, total_rounds=8, score=0,
+                 difficulty_label=None):
+    """顶部状态面板：轮次、人数、资源、道具、当前累计得分、难度。"""
+    title_text = "第 %d/%d 轮 · %s" % (round_no, total_rounds,
+                                       STAGE_NAMES.get(stage, str(stage)))
+    if difficulty_label:
+        title_text += " · 难度%s" % difficulty_label
+    title = title_text
     items = "、".join(player.special_items) if player.special_items else "无"
     body = Text()
     body.append("幸存者 ", style="bold")
@@ -75,7 +79,6 @@ def path_options_table(options, catalog, affordable_flags=None):
     table.add_column("左卡")
     table.add_column("右卡")
     table.add_column("选前效果")
-    hints = {1: "奖励：+2 任意资源", 2: "正常", 3: "代价：-2 任意资源"}
     for opt in options:
         cells = []
         for pos in range(2):
@@ -89,9 +92,15 @@ def path_options_table(options, catalog, affordable_flags=None):
                     cells.append(Text("事件：无", style="green"))
                 else:
                     cells.append(Text("事件：有", style="yellow"))
-        hint = hints.get(opt.index, "")
-        if opt.index == 3 and not affordable_flags.get(opt.index, True):
-            hint = Text(hint + "（资源不足，不可选）", style="bold red")
+        # 选前效果按该路径实际奖惩生成（数值随难度变化，不能写死）
+        if opt.bonus > 0:
+            hint = "奖励：+%d 任意资源" % opt.bonus
+        elif opt.cost > 0:
+            hint = "代价：-%d 任意资源" % opt.cost
+        else:
+            hint = "无奖惩"
+        if not affordable_flags.get(opt.index, True):
+            hint = Text("%s（资源不足，不可选）" % hint, style="bold red")
         table.add_row(str(opt.index), cells[0], cells[1], hint)
     return table
 
