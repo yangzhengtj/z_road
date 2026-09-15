@@ -4,6 +4,8 @@
 
   1. 近战前行动（action）：可选一次【远程攻击】（1 弹药掷 2 普通骰，仅击杀面生效），
      或在近战开始前【逃跑】（付 2 汽油、弃牌不得分），也可以直接进入近战；
+     **一旦掷出过近战骰（首批未清完丧尸），本场后续批次只能继续近战，
+     不能再远程攻击、也不能逃跑**；
   2. 近战（melee）：每名幸存者掷 1 颗骰；屍群按 level 把等量普通骰替换为强化骰
      （持有“校车”时强化骰降级为普通骰）；一批骰子同时掷出，逐面结算：
         空白        —— 无事
@@ -59,6 +61,7 @@ def new_combat_state(card_id, zombies_count, zombies_level, mod_kinds=None):
         "no_meds": "mod_no_meds" in mod_kinds,
         "no_flee": "mod_no_flee" in mod_kinds,
         "ranged_used": False,              # 远程攻击每场仅一次
+        "melee_started": False,            # 是否已进入近战（一旦为 True，远程/逃跑永久关闭）
         "combat_stage": STAGE_ACTION,
         "last_roll": None,                 # 最近一批近战骰（等待决策时非空）
         "result": None,                    # won/lost/fled
@@ -113,12 +116,16 @@ class Combat(object):
             return []
         actions = []
         ra_cfg = self.cfg["ranged_attack"]
-        if not self.state["ranged_used"] and self.player.resources.ammo >= 1:
+        # 远程与逃跑都只在“尚未进入近战”时开放；近战首批打完即永久关闭
+        melee_started = self.state.get("melee_started", False)
+        if (not self.state["ranged_used"] and not melee_started
+                and self.player.resources.ammo >= 1):
             # 最多能打几个 burst（每个 burst 耗 1 弹药、掷 2 骰）
             max_burst = self.player.resources.ammo // self._ammo_per_burst
             actions.append({"action": "ranged", "max_burst": max_burst,
                             "dice_per_burst": self._dice_per_burst})
-        if not self.state["no_flee"] and self.player.resources.gas >= self._flee_gas:
+        if (not self.state["no_flee"] and not melee_started
+                and self.player.resources.gas >= self._flee_gas):
             actions.append({"action": "flee", "gas_cost": self._flee_gas})
         actions.append({"action": "melee"})
         return actions
@@ -127,6 +134,8 @@ class Combat(object):
         """执行远程攻击：burst_count 为支付弹药数（每 1 弹药掷 2 普通骰）。"""
         if self.stage != STAGE_ACTION:
             raise EngineError("当前不是近战前行动阶段，不能远程攻击")
+        if self.state.get("melee_started", False):
+            raise EngineError("已进入近战，本场不能再进行远程攻击")
         if self.state["ranged_used"]:
             raise EngineError("每场战斗只能远程攻击一次")
         if burst_count < 1 or burst_count > self.player.resources.ammo:
@@ -163,6 +172,8 @@ class Combat(object):
         """近战开始前逃跑：付汽油、弃牌不得分。"""
         if self.stage != STAGE_ACTION:
             raise EngineError("当前阶段不能逃跑")
+        if self.state.get("melee_started", False):
+            raise EngineError("已进入近战，不能再逃跑")
         if self.state["no_flee"]:
             raise EngineError("本场战斗不能逃跑")
         if self.player.resources.gas < self._flee_gas:
@@ -186,6 +197,8 @@ class Combat(object):
         """掷出一批近战骰并生成“药剂机会列表”，等待玩家决策。"""
         if self.stage != STAGE_ACTION:
             raise EngineError("上一批近战骰尚未结算")
+        # 标记本场已进入近战：此后远程攻击与逃跑永久关闭，只能一批批近战到底
+        self.state["melee_started"] = True
         enhanced_num, normal_num = self._melee_dice_composition()
         entries = []
         idx = 0

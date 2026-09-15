@@ -222,6 +222,21 @@ def test_flee_forbidden_by_mod():
 
 
 # ---------- 引擎层：战斗收口推进遭遇、中途存档 ----------
+def test_ranged_and_flee_close_after_melee_starts():
+    """规则：一旦掷出过近战骰，本场后续批次只能继续近战，远程与逃跑永久关闭。"""
+    combat, _, _ = _combat(survivors=5, zombies=8, faces=[1] * 10)  # 全空白，清不完
+    first = {a["action"] for a in combat.available_actions()}
+    assert {"ranged", "flee", "melee"} <= first
+    combat.roll_melee()
+    outcome = combat.resolve_melee([])
+    assert outcome["result"] == "ongoing"  # 首批没打完，回到行动阶段
+    assert [a["action"] for a in combat.available_actions()] == ["melee"]
+    with pytest.raises(EngineError):
+        combat.do_ranged(1)
+    with pytest.raises(EngineError):
+        combat.do_flee()
+
+
 def _force_encounter(engine, card_id):
     engine.state.phase = "encounter"
     engine.state.encounter_queue = [card_id, "I-1"]

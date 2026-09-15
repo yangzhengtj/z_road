@@ -125,7 +125,7 @@ class GameApp(object):
 
     # ---------- 主菜单 ----------
     def run(self):
-        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.2",
+        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.3",
                                      border_style="magenta"))
         while True:
             try:
@@ -328,9 +328,16 @@ class GameApp(object):
 
         while engine.state.pending_combat is not None:
             actions = {a["action"]: a for a in engine.combat_actions()}
+            # 一旦掷过近战骰，本场只能继续近战，远程/逃跑置灰并说明原因
+            melee_started = pending.get("melee_started", False)
+            ranged_label = "远程攻击（r，耗弹药）"
+            flee_label = "逃跑（f，耗 2 汽油、弃牌）"
+            if melee_started:
+                ranged_label += "——已进入近战，不可再用"
+                flee_label += "——已进入近战，不可再用"
             menu = [("m", "近战（m，每人 1 骰）", "melee" in actions)]
-            menu.insert(0, ("r", "远程攻击（r，耗弹药）", "ranged" in actions))
-            menu.append(("f", "逃跑（f，耗 2 汽油、弃牌）", "flee" in actions))
+            menu.insert(0, ("r", ranged_label, "ranged" in actions))
+            menu.append(("f", flee_label, "flee" in actions))
             choice = self.ask_menu("选择行动", menu)
 
             if choice == "r":
