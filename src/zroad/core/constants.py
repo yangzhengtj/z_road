@@ -46,15 +46,16 @@ ENHANCED_FACE_NAMES = {1: FACE_BITE, 2: FACE_HOLD, 3: FACE_KILL,
 EVENT_NONE = "无"
 EVENT_PREFIX = "事件效果："
 
-# ---- 六种自设特殊道具（名称与卡牌事件文本完全一致） ----
+# ---- 自设特殊道具（名称与卡牌事件文本完全一致） ----
 ITEM_SNIPER = "狙击枪"
 ITEM_MAP = "地图"
-ITEM_BUS = "校车"
+ITEM_BUS = "校车"          # I-9 获得；单独持有无战斗效果
+ITEM_VEHICLE_ARMOR = "车辆铠甲"  # II-5 获得；与校车同时持有时屍群强化骰全降级
 ITEM_GAS = "毒气"
 ITEM_WOUND = "受伤"
 # 原“幸存者”标记自 v0.6.1 起改名“狂热者”（I-8 获得、III-9 养护、III-17 引爆）
 ITEM_ZEALOT = "狂热者"
-SPECIAL_ITEMS = (ITEM_SNIPER, ITEM_MAP, ITEM_BUS,
+SPECIAL_ITEMS = (ITEM_SNIPER, ITEM_MAP, ITEM_BUS, ITEM_VEHICLE_ARMOR,
                  ITEM_GAS, ITEM_WOUND, ITEM_ZEALOT)
 
 # ---- 对局模式 ----

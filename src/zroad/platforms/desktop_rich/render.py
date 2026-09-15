@@ -47,8 +47,11 @@ def _scavenge_text(card):
     return "、".join(parts) if parts else "无"
 
 
-def card_panel(card, title=None, bus_held=False):
-    """一张遭遇卡的完整信息面板。bus_held=True 时屍群强化骰会因校车降级。"""
+def card_panel(card, title=None, armored_bus_held=False):
+    """一张遭遇卡的完整信息面板。
+
+    armored_bus_held=True 表示玩家同时持有校车+车辆铠甲，屍群强化骰会全降级。
+    """
     table = Table.grid(padding=(0, 2))
     table.add_column(style="dim", justify="right")
     table.add_column()
@@ -63,8 +66,8 @@ def card_panel(card, title=None, bus_held=False):
         zombie = "丧尸 %d 只" % z["count"]
         if z["level"] > 0:
             zombie += "（屍群等级 %d：%d 颗强化骰" % (z["level"], z["level"])
-            if bus_held:
-                zombie += "，持校车降级为普通骰"
+            if armored_bus_held:
+                zombie += "，校车+车辆铠甲：全降级为普通骰"
             zombie += "）"
         table.add_row("战斗", zombie)
     else:

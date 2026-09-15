@@ -78,10 +78,19 @@ def test_face_maps_match_dice_json():
 def test_melee_composition_level():
     combat, _, _ = _combat(survivors=5, level=2)
     assert combat._melee_dice_composition() == (2, 3)  # 2 强化 + 3 普通
-    combat2, _, _ = _combat(survivors=5, level=3, items=[C.ITEM_BUS])
-    assert combat2._melee_dice_composition() == (0, 5)  # 校车：强化降级为普通
     combat3, _, _ = _combat(survivors=2, level=3)
     assert combat3._melee_dice_composition() == (2, 0)  # 总数不超过幸存者
+
+
+def test_armored_bus_downgrades_enhanced():
+    """校车+车辆铠甲两件套齐时强化骰全降级；只持有一件不降级（v0.6.6 口径）。"""
+    bus_only, _, _ = _combat(survivors=5, level=2, items=[C.ITEM_BUS])
+    assert bus_only._melee_dice_composition() == (2, 3)  # 只有校车：不降级
+    armor_only, _, _ = _combat(survivors=5, level=2, items=[C.ITEM_VEHICLE_ARMOR])
+    assert armor_only._melee_dice_composition() == (2, 3)  # 只有铠甲：不降级
+    both, _, _ = _combat(survivors=5, level=3,
+                         items=[C.ITEM_BUS, C.ITEM_VEHICLE_ARMOR])
+    assert both._melee_dice_composition() == (0, 5)  # 两件套：全普通骰
 
 
 # ---------- 六骰面 × 两骰种逐面结算 ----------

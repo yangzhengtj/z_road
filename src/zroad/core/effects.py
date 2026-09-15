@@ -19,8 +19,8 @@ v0.6.1 起卡牌数据拆成两个字段：
 import re
 
 from .constants import (EVENT_NONE, EVENT_PREFIX, DICE_NORMAL, SPECIAL_ITEMS,
-                        ITEM_SNIPER, ITEM_MAP, ITEM_BUS, ITEM_GAS, ITEM_WOUND,
-                        ITEM_ZEALOT)
+                        ITEM_SNIPER, ITEM_MAP, ITEM_BUS, ITEM_VEHICLE_ARMOR,
+                        ITEM_GAS, ITEM_WOUND, ITEM_ZEALOT)
 from .model import EngineError
 
 # ---- 效果类型常量（同样不用 enum） ----
@@ -30,7 +30,7 @@ KIND_LOSE_SURVIVORS = "lose_survivors"   # 队伍人数 -N（如 II-6 毒蛇）
 KIND_GAIN_ITEM = "gain_item"             # 获得特殊道具
 KIND_LOSE_RESOURCE_CHOICE = "lose_resource_choice"  # 三选一资源 -N
 KIND_ITEM_MAP_SCORE = "item_map_score"   # 每张地图 +分并消耗
-KIND_ITEM_BUS_NOTE = "item_bus_note"     # 有校车：获得被动能力（无即时变化）
+KIND_ITEM_ARMOR = "item_vehicle_armor"   # II-5 获得“车辆铠甲”（与校车两件套降级强化骰）
 KIND_ITEM_SNIPER_PASS = "item_sniper_pass"  # 有狙击枪安全通过，否则 -N 人
 KIND_ITEM_WOUND = "item_wound"           # 有“受伤”：-1 并消耗
 KIND_ITEM_GAS = "item_gas"               # 每个“毒气”标记 -1（不消耗标记）
@@ -129,8 +129,11 @@ def parse_effect(card):
             score = int(match.group(1))
         return _spec(KIND_ITEM_MAP_SCORE, TIMING_IMMEDIATE,
                      item=ITEM_MAP, score=score)
-    if item == ITEM_BUS:
-        return _spec(KIND_ITEM_BUS_NOTE, TIMING_IMMEDIATE, item=ITEM_BUS)
+    # II-5：获得“车辆铠甲”；只有与“校车”同时持有时，屍群才全用普通骰
+    # （句中同时出现校车与车辆铠甲，必须先于下面的校车分支匹配）
+    if ITEM_VEHICLE_ARMOR in text:
+        return _spec(KIND_ITEM_ARMOR, TIMING_IMMEDIATE,
+                     item=ITEM_VEHICLE_ARMOR)
     if item == ITEM_SNIPER:
         lose = 2
         match = re.search(r"队伍人数-(\d+)", text)
@@ -306,10 +309,16 @@ def resolve_immediate(spec, player, rng, stats=None, decision=None):
             result["logs"].append("没有地图，正常通过")
         return result
 
-    if kind == KIND_ITEM_BUS_NOTE:
-        held = player.has_item(spec["item"])
-        result["logs"].append("校车可加固冲撞，高等级丧尸按普通骰处理"
-                              if held else "没有校车，无事发生")
+    if kind == KIND_ITEM_ARMOR:
+        # II-5：拿到“车辆铠甲”；是否立刻形成两件套取决于此前是否已有校车
+        player.gain_item(spec["item"])
+        result["item_gained"] = spec["item"]
+        if player.has_item(ITEM_BUS):
+            result["logs"].append(
+                "获得车辆铠甲：校车已完成武装，今后无论屍群等级多少都只掷普通骰")
+        else:
+            result["logs"].append(
+                "获得车辆铠甲；再持有校车后，屍群才会全部按普通骰结算（当前尚无校车）")
         return result
 
     if kind == KIND_ITEM_SNIPER_PASS:

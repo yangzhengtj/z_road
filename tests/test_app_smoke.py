@@ -100,22 +100,25 @@ def test_app_hard_difficulty_path2_costs_one(app, monkeypatch):
 
 
 def test_bus_downgrade_shown_on_panels(app):
-    """持校车遭遇屍群时，遭遇卡面板与战斗面板都要明示强化骰被降级。"""
+    """校车+车辆铠甲两件套遭遇屍群时，面板明示强化骰全降级；单件不提示。"""
     from rich.console import Console
     from zroad.platforms.desktop_rich import render
-    card = next(c for c in app.cards if c["zombies"]["level"] == 1)
-    out = io.StringIO()
-    console = Console(file=out, width=100)
-    console.print(render.card_panel(card, bus_held=True))
-    assert "持校车降级为普通骰" in out.getvalue()
-    # 战斗信息栏的提示在 do_combat 里拼装，直接校验拼装条件
-    pending = {"card_id": card["id"], "zombies_count": card["zombies"]["count"],
-               "zombies_left": card["zombies"]["count"],
-               "zombies_level": 1, "no_meds": False, "no_flee": False,
-               "ranged_bite_adds_zombie": False}
     from zroad.core.model import PlayerState, Resources
-    from zroad.core.constants import ITEM_BUS
+    from zroad.core.constants import ITEM_BUS, ITEM_VEHICLE_ARMOR
+    card = next(c for c in app.cards if c["zombies"]["level"] == 1)
+    # 单件校车：不出现降级提示
+    out1 = io.StringIO()
+    Console(file=out1, width=100).print(
+        render.card_panel(card, armored_bus_held=False))
+    assert "降级" not in out1.getvalue()
+    # 两件套齐：出现降级提示
+    out2 = io.StringIO()
+    Console(file=out2, width=100).print(
+        render.card_panel(card, armored_bus_held=True))
+    assert "校车+车辆铠甲：全降级为普通骰" in out2.getvalue()
     player = PlayerState(survivors=5, resources=Resources(4, 4, 4))
     player.gain_item(ITEM_BUS)
-    hint = (pending["zombies_level"] > 0 and player.has_item(ITEM_BUS))
-    assert hint is True
+    player.gain_item(ITEM_VEHICLE_ARMOR)
+    combo = (player.has_item(ITEM_BUS)
+             and player.has_item(ITEM_VEHICLE_ARMOR))
+    assert combo is True

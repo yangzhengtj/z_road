@@ -44,7 +44,7 @@ EXPECTED_KIND = {
     "I-16": fx.KIND_GAIN_ITEM,
     # 阶段 II
     "II-1": fx.KIND_NONE, "II-2": fx.KIND_NONE, "II-3": fx.KIND_NONE,
-    "II-4": fx.KIND_ITEM_MAP_SCORE, "II-5": fx.KIND_ITEM_BUS_NOTE,
+    "II-4": fx.KIND_ITEM_MAP_SCORE, "II-5": fx.KIND_ITEM_ARMOR,
     "II-6": fx.KIND_LOSE_SURVIVORS,
     "II-7": fx.KIND_PAY_GAS_OR_LOSE, "II-8": fx.KIND_LOSE_RESOURCE_CHOICE,
     "II-9": fx.KIND_RUSSIAN_ROULETTE, "II-10": fx.KIND_GAIN_SURVIVORS,
@@ -126,6 +126,23 @@ def test_gain_item():
     spec = {"kind": fx.KIND_GAIN_ITEM, "timing": fx.TIMING_IMMEDIATE, "item": "地图"}
     fx.resolve_immediate(spec, p, SeededRng(1))
     assert p.has_item("地图")
+
+
+def test_vehicle_armor_gain_and_combo():
+    """II-5 车辆铠甲：无条件拿到；与校车是否同时持有只影响提示文案，标记都保留。"""
+    from zroad.core.constants import ITEM_BUS, ITEM_VEHICLE_ARMOR
+    # 此前没有校车：铠甲照拿，提示尚未成套
+    p1 = _player()
+    spec = {"kind": fx.KIND_ITEM_ARMOR, "timing": fx.TIMING_IMMEDIATE,
+            "item": ITEM_VEHICLE_ARMOR}
+    r1 = fx.resolve_immediate(spec, p1, SeededRng(1))
+    assert p1.has_item(ITEM_VEHICLE_ARMOR) and not p1.has_item(ITEM_BUS)
+    assert "尚无校车" in "".join(r1["logs"])
+    # 此前已有校车：拿到铠甲即两件套成型
+    p2 = _player(items=[ITEM_BUS])
+    r2 = fx.resolve_immediate(spec, p2, SeededRng(1))
+    assert p2.has_item(ITEM_VEHICLE_ARMOR) and p2.has_item(ITEM_BUS)
+    assert "普通骰" in "".join(r2["logs"])
 
 
 def test_lose_resource_choice():

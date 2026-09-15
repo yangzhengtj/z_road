@@ -7,7 +7,8 @@
      **一旦掷出过近战骰（首批未清完丧尸），本场后续批次只能继续近战，
      不能再远程攻击、也不能逃跑**；
   2. 近战（melee）：每名幸存者掷 1 颗骰；屍群按 level 把等量普通骰替换为强化骰
-     （持有“校车”时强化骰降级为普通骰）；一批骰子同时掷出，逐面结算：
+     （**同时持有“校车”（I-9）与“车辆铠甲”（II-5）时，强化骰全部降级为普通骰**，
+     只持有其中一件不降级）；一批骰子同时掷出，逐面结算：
         空白        —— 无事
         击杀        —— 杀 1 丧尸
         额外击杀    —— 杀 1，可再付 1 药剂多杀 1
@@ -26,7 +27,8 @@
 
 from .constants import (DICE_NORMAL, DICE_ENHANCED, NORMAL_FACE_NAMES,
                         ENHANCED_FACE_NAMES, FACE_HOLD, FACE_KILL,
-                        FACE_EXTRA_KILL, FACE_BITE, FACE_DEATH, ITEM_BUS)
+                        FACE_EXTRA_KILL, FACE_BITE, FACE_DEATH, ITEM_BUS,
+                        ITEM_VEHICLE_ARMOR)
 from .model import EngineError
 
 # 战斗内部小阶段
@@ -94,9 +96,14 @@ class Combat(object):
     def zombies_left(self):
         return self.state["zombies_left"]
 
-    def _bus_held(self):
-        """持有校车：变异（强化）丧尸按普通丧尸处理。"""
-        return self.player.has_item(ITEM_BUS)
+    def _armored_bus_held(self):
+        """是否同时持有“校车”（I-9）与“车辆铠甲”（II-5）。
+
+        两件套齐时才能冲开屍群：无论屍群等级，强化骰全部降级为普通骰；
+        只持有其中一件（光有校车没武装材料，或只有材料没有车）都不生效。
+        """
+        return (self.player.has_item(ITEM_BUS)
+                and self.player.has_item(ITEM_VEHICLE_ARMOR))
 
     def _record_dice(self, dice_kind, faces):
         bucket = self.stats["dice_faces"].setdefault(
@@ -190,7 +197,9 @@ class Combat(object):
         total = self.player.survivors
         if total <= 0:
             raise EngineError("已无幸存者，无法近战")
-        enhanced = 0 if self._bus_held() else min(self.state["zombies_level"], total)
+        # 校车+车辆铠甲两件套齐时，屍群强化骰全部降级为普通骰
+        enhanced = 0 if self._armored_bus_held() else min(
+            self.state["zombies_level"], total)
         return enhanced, total - enhanced
 
     def roll_melee(self):

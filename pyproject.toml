@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zroad"
-version = "0.6.5"
+version = "0.6.6"
 description = "亡命之途（Hit Z Road）纯文字版：可移植规则核心 + 多前端"
 requires-python = ">=3.8"
 dependencies = []

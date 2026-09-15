@@ -26,7 +26,8 @@ from rich.table import Table
 from zroad.core.engine import Engine
 from zroad.core.model import EngineError
 from zroad.core import effects as fx
-from zroad.core.constants import (NORMAL_FACE_NAMES, RESOURCE_KEYS, ITEM_BUS)
+from zroad.core.constants import (NORMAL_FACE_NAMES, RESOURCE_KEYS, ITEM_BUS,
+                                  ITEM_VEHICLE_ARMOR)
 from .save_store import (SaveStore, AUTO_SLOT, MANUAL_SLOTS, SLOT_LABELS)
 from . import render
 
@@ -125,7 +126,7 @@ class GameApp(object):
 
     # ---------- 主菜单 ----------
     def run(self):
-        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.5",
+        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.6",
                                      border_style="magenta"))
         while True:
             try:
@@ -312,7 +313,8 @@ class GameApp(object):
             difficulty_label=engine.difficulty_label()))
         self.console.print(render.card_panel(
             card, title="遭遇卡 %s" % card_id,
-            bus_held=player.has_item(ITEM_BUS)))
+            armored_bus_held=(player.has_item(ITEM_BUS)
+                              and player.has_item(ITEM_VEHICLE_ARMOR))))
         self.pause("查看卡面后按回车结算…")
 
         needed = engine.peek_card_decision()
@@ -338,14 +340,15 @@ class GameApp(object):
     def do_combat(self, engine):
         pending = engine.state.pending_combat
         card_id = pending["card_id"]
-        # 持有校车时，屍群本应换上的强化骰全部降级为普通骰（等级 0 时无强化骰可降）
+        # 同时持有校车+车辆铠甲时，屍群本应换上的强化骰全部降级为普通骰
         bus_downgrade = (pending["zombies_level"] > 0
-                         and engine.state.player.has_item(ITEM_BUS))
+                         and engine.state.player.has_item(ITEM_BUS)
+                         and engine.state.player.has_item(ITEM_VEHICLE_ARMOR))
         self.console.print(Panel(
             "遭遇丧尸 %d 只（剩余 %d）｜屍群等级 %d%s%s%s%s"
             % (pending["zombies_count"], pending["zombies_left"],
                pending["zombies_level"],
-               "｜持校车：强化骰降级为普通骰" if bus_downgrade else "",
+               "｜校车+车辆铠甲：强化骰全降级为普通骰" if bus_downgrade else "",
                "｜禁药剂" if pending["no_meds"] else "",
                "｜禁逃跑" if pending["no_flee"] else "",
                "｜远程咬伤会增敌" if pending["ranged_bite_adds_zombie"] else ""),
