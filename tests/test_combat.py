@@ -21,12 +21,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module")
 def cards():
-    return json.loads((ROOT / "data" / "cards.json").read_text(encoding="utf-8"))
+    return json.loads((ROOT / "src" / "zroad" / "data" / "cards.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
 def config():
-    return json.loads((ROOT / "data" / "config.json").read_text(encoding="utf-8"))
+    return json.loads((ROOT / "src" / "zroad" / "data" / "config.json").read_text(encoding="utf-8"))
 
 
 class ScriptedRng(object):
@@ -48,7 +48,7 @@ class ScriptedRng(object):
 def _combat(survivors=5, zombies=3, level=0, ammo=4, gas=4, meds=4,
             faces=(), mod_kinds=None, items=None, config=None):
     cfg = config if config is not None else json.loads(
-        (ROOT / "data" / "config.json").read_text(encoding="utf-8"))
+        (ROOT / "src" / "zroad" / "data" / "config.json").read_text(encoding="utf-8"))
     player = PlayerState(survivors=survivors,
                          resources=Resources(ammo, gas, meds))
     for item in (items or []):
@@ -68,7 +68,7 @@ def GameState_stats():
 
 # ---------- 骰面映射与数据一致 ----------
 def test_face_maps_match_dice_json():
-    dice = json.loads((ROOT / "data" / "dice.json").read_text(encoding="utf-8"))
+    dice = json.loads((ROOT / "src" / "zroad" / "data" / "dice.json").read_text(encoding="utf-8"))
     for face in range(1, 7):
         assert C.NORMAL_FACE_NAMES[face] == dice["normal"][face - 1]["name"]
         assert C.ENHANCED_FACE_NAMES[face] == dice["enhanced"][face - 1]["name"]

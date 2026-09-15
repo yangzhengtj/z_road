@@ -5,14 +5,17 @@
      "slot": "auto" / "manual_1".., "saved_at": 时间字符串,
      "state": <GameState.to_dict()>}
 
-存档目录默认在仓库根的 saves/（已被 .gitignore 忽略），可用环境变量
-ZROAD_SAVE_DIR 覆盖。桌面层允许使用 pathlib / datetime / json，core 不依赖本模块。
+存档目录由 paths.save_dir() 按运行形态解析：开发模式为仓库根 saves/，
+pip 安装版 / PyInstaller 单文件为用户目录 ~/.zroad/saves/，
+环境变量 ZROAD_SAVE_DIR 始终最优先。桌面层允许使用 pathlib / datetime / json，
+core 不依赖本模块。
 """
 
 import json
-import os
 from datetime import datetime
 from pathlib import Path
+
+from . import paths
 
 AUTO_SLOT = "auto"
 MANUAL_SLOTS = ("manual_1", "manual_2", "manual_3")
@@ -21,12 +24,12 @@ SLOT_LABELS = {"auto": "自动存档", "manual_1": "手动槽 1",
 
 
 def default_save_dir():
-    """存档目录：环境变量优先，否则用仓库根下的 saves/。"""
-    env_dir = os.environ.get("ZROAD_SAVE_DIR")
-    if env_dir:
-        return Path(env_dir)
-    # 本文件：<仓库>/src/zroad/platforms/desktop_rich/save_store.py → 上溯 4 级到仓库根
-    return Path(__file__).resolve().parents[4] / "saves"
+    """存档目录：统一由 paths 模块按运行形态解析。
+
+    开发模式 → 仓库根 saves/；pip 安装 / PyInstaller 打包 → ~/.zroad/saves/；
+    环境变量 ZROAD_SAVE_DIR 始终最优先。
+    """
+    return paths.save_dir()
 
 
 class SaveStore(object):

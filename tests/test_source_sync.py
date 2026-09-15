@@ -30,11 +30,11 @@ def converter():
 
 def test_cards_md_matches_json(converter):
     expected = converter.convert_cards(str(ROOT / "参考资料" / "卡牌.md"))
-    actual = json.loads((ROOT / "data" / "cards.json").read_text(encoding="utf-8"))
+    actual = json.loads((ROOT / "src" / "zroad" / "data" / "cards.json").read_text(encoding="utf-8"))
     assert expected == actual, "cards.json 与 卡牌.md 不一致，请重新运行 md_to_json.py"
 
 
 def test_dice_md_matches_json(converter):
     expected = converter.convert_dice(str(ROOT / "参考资料" / "骰子.md"))
-    actual = json.loads((ROOT / "data" / "dice.json").read_text(encoding="utf-8"))
+    actual = json.loads((ROOT / "src" / "zroad" / "data" / "dice.json").read_text(encoding="utf-8"))
     assert expected == actual, "dice.json 与 骰子.md 不一致，请重新运行 md_to_json.py"

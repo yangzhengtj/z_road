@@ -15,7 +15,6 @@
 """
 
 import json
-from pathlib import Path
 
 from rich.console import Console
 from rich.panel import Panel
@@ -28,17 +27,17 @@ from zroad.core.constants import (NORMAL_FACE_NAMES, RESOURCE_KEYS, ITEM_BUS,
                                   ITEM_VEHICLE_ARMOR)
 from .save_store import (SaveStore, AUTO_SLOT, MANUAL_SLOTS, SLOT_LABELS)
 from .records_store import RecordsStore
+from . import paths
 from . import render
-
-# 仓库根与数据目录（本文件位于 src/zroad/platforms/desktop_rich/，上溯 4 级）
-REPO_ROOT = Path(__file__).resolve().parents[4]
-DATA_DIR = REPO_ROOT / "data"
 
 
 def load_game_data():
-    """读取卡牌与规则配置（桌面层做文件 I/O，core 不碰文件）。"""
-    cards = json.loads((DATA_DIR / "cards.json").read_text(encoding="utf-8"))
-    config = json.loads((DATA_DIR / "config.json").read_text(encoding="utf-8"))
+    """读取卡牌与规则配置（桌面层做文件 I/O，core 不碰文件）。
+
+    数据目录由 paths 模块按运行形态（开发/pip 安装/PyInstaller 打包）解析。
+    """
+    cards = json.loads(paths.data_file("cards.json").read_text(encoding="utf-8"))
+    config = json.loads(paths.data_file("config.json").read_text(encoding="utf-8"))
     return cards, config
 
 
@@ -126,7 +125,7 @@ class GameApp(object):
 
     # ---------- 主菜单 ----------
     def run(self):
-        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.7.0",
+        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.7.1",
                                      border_style="magenta"))
         while True:
             try:

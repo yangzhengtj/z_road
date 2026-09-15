@@ -25,12 +25,12 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module")
 def cards():
-    return json.loads((ROOT / "data" / "cards.json").read_text(encoding="utf-8"))
+    return json.loads((ROOT / "src" / "zroad" / "data" / "cards.json").read_text(encoding="utf-8"))
 
 
 @pytest.fixture(scope="module")
 def config():
-    return json.loads((ROOT / "data" / "config.json").read_text(encoding="utf-8"))
+    return json.loads((ROOT / "src" / "zroad" / "data" / "config.json").read_text(encoding="utf-8"))
 
 
 # ---------- 测试辅助：按固定脚本打完一轮（M2 不结算遭遇，只走队列） ----------

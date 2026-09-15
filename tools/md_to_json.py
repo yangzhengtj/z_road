@@ -7,10 +7,11 @@ md_to_json.py —— 把 Markdown 版内容源表转换为程序使用的 JSON �
     参考资料/卡牌.md   —— 60 张卡牌的 Markdown 表格
     参考资料/骰子.md   —— 普通骰/强化骰骰面表
 生成物（程序只读这些）：
-    data/cards.json、data/dice.json
+    src/zroad/data/cards.json、src/zroad/data/dice.json
+    （v0.7.1 起数据随包发布，放在包目录内，pipx 安装与 PyInstaller 打包都能带上）
 
 本脚本只使用 Python 标准库，无需 pip 安装任何依赖。
-改完 md 后在仓库根目录执行：  python3 tools/md_to_json.py
+在仓库根目录执行：  python3 tools/md_to_json.py
 """
 
 import json
@@ -18,8 +19,12 @@ import os
 import re
 import sys
 
+# 仓库根 = 本脚本所在 tools/ 的上一级（不依赖运行时的当前目录）
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 ROMAN_STAGE = {"I": 1, "II": 2, "III": 3}
-SOURCE_DIR = os.path.join("参考资料")
+SOURCE_DIR = os.path.join(REPO_ROOT, "参考资料")
+# 数据 JSON 随包放在 src/zroad/data/（pyproject package-data 会带上）
+OUT_DIR = os.path.join(REPO_ROOT, "src", "zroad", "data")
 
 
 def parse_md_table(path, expected_cols):
@@ -124,10 +129,10 @@ def main():
 
     cards = convert_cards(cards_md)
     dice = convert_dice(dice_md)
-    os.makedirs("data", exist_ok=True)
-    with open(os.path.join("data", "cards.json"), "w", encoding="utf-8") as f:
+    os.makedirs(OUT_DIR, exist_ok=True)
+    with open(os.path.join(OUT_DIR, "cards.json"), "w", encoding="utf-8") as f:
         json.dump(cards, f, ensure_ascii=False, indent=2)
-    with open(os.path.join("data", "dice.json"), "w", encoding="utf-8") as f:
+    with open(os.path.join(OUT_DIR, "dice.json"), "w", encoding="utf-8") as f:
         json.dump(dice, f, ensure_ascii=False, indent=2)
 
     stage_counts = {1: 0, 2: 0, 3: 0}

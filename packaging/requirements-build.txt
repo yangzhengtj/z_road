@@ -1,0 +1,4 @@
+# 打包期依赖（玩家运行时不需要）：GitHub Actions 与本地打包时安装
+# 用法：pip install -r packaging/requirements-build.txt
+pyinstaller>=6.0
+rich>=13.0
