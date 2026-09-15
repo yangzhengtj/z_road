@@ -99,6 +99,29 @@ def test_app_hard_difficulty_path2_costs_one(app, monkeypatch):
     assert "难度困难" in app.console.file.getvalue()
 
 
+def test_combat_status_reprints_each_batch(app):
+    """战斗信息框每批行动前重画，剩余丧尸数始终取引擎最新值。"""
+    class _FakePlayer:
+        def has_item(self, name):
+            return False
+
+    class _FakeState:
+        player = _FakePlayer()
+        pending_combat = {"zombies_count": 6, "zombies_left": 6,
+                          "zombies_level": 1, "no_meds": False,
+                          "no_flee": False, "ranged_bite_adds_zombie": False}
+
+    class _FakeEngine:
+        state = _FakeState()
+
+    app._print_combat_status(_FakeEngine())
+    _FakeState.pending_combat["zombies_left"] = 2
+    app._print_combat_status(_FakeEngine())
+    out = app.console.file.getvalue()
+    assert "剩余 6" in out and "剩余 2" in out
+    assert out.count("战斗") >= 2
+
+
 def test_bus_downgrade_shown_on_panels(app):
     """校车+车辆铠甲两件套遭遇屍群时，面板明示强化骰全降级；单件不提示。"""
     from rich.console import Console

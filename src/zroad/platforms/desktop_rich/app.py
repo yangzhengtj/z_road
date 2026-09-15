@@ -126,7 +126,7 @@ class GameApp(object):
 
     # ---------- 主菜单 ----------
     def run(self):
-        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.6",
+        self.console.print(Panel.fit("[bold]亡命之途 · 文字版[/bold]  v0.6.7",
                                      border_style="magenta"))
         while True:
             try:
@@ -337,9 +337,13 @@ class GameApp(object):
         self.pause()
 
     # ---------- 战斗 ----------
-    def do_combat(self, engine):
+    def _print_combat_status(self, engine):
+        """打印“战斗”信息框。
+
+        每一批行动（远程/近战）前都会重画一次，剩余丧尸数取引擎最新值，
+        这样多批次战斗时玩家随时能看到还剩多少丧尸没杀。
+        """
         pending = engine.state.pending_combat
-        card_id = pending["card_id"]
         # 同时持有校车+车辆铠甲时，屍群本应换上的强化骰全部降级为普通骰
         bus_downgrade = (pending["zombies_level"] > 0
                          and engine.state.player.has_item(ITEM_BUS)
@@ -354,7 +358,13 @@ class GameApp(object):
                "｜远程咬伤会增敌" if pending["ranged_bite_adds_zombie"] else ""),
             title="战斗", border_style="red"))
 
+    def do_combat(self, engine):
+        card_id = engine.state.pending_combat["card_id"]
+
         while engine.state.pending_combat is not None:
+            # 每批行动前都重画战斗信息框，剩余丧尸数随批次刷新
+            self._print_combat_status(engine)
+            pending = engine.state.pending_combat
             actions = {a["action"]: a for a in engine.combat_actions()}
             # 一旦掷过近战骰，本场只能继续近战，远程/逃跑置灰并说明原因
             melee_started = pending.get("melee_started", False)
