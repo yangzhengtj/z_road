@@ -84,7 +84,7 @@ jobs:
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: 亡命之途·文字版 ${{ github.ref_name }}
+          name: 末路求生·文字版 ${{ github.ref_name }}
           generate_release_notes: true
           files: |
             dist/zroad-*
