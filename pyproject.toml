@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "zroad"
-version = "0.7.1"
+version = "0.8.0"
 description = "末路求生：末世公路题材纯文字单机游戏（规则框架灵感来源于桌游 Hit Z Road）；可移植规则核心 + 多前端"
 requires-python = ">=3.8"
 dependencies = []

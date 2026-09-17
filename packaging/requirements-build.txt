@@ -2,3 +2,5 @@
 # 用法：pip install -r packaging/requirements-build.txt
 pyinstaller>=6.0
 rich>=13.0
+# Cardputer 点阵字库生成（tools/build_mpy_font.py，仅 v0.8.0 设备构建需要）
+pillow>=10.0

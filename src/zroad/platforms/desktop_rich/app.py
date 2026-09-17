@@ -125,7 +125,7 @@ class GameApp(object):
 
     # ---------- 主菜单 ----------
     def run(self):
-        self.console.print(Panel.fit("[bold]末路求生 · 文字版[/bold]  v0.7.1",
+        self.console.print(Panel.fit("[bold]末路求生 · 文字版[/bold]  v0.8.0",
                                      border_style="magenta"))
         while True:
             try:
