@@ -22,7 +22,7 @@ def config():
     return json.loads((ROOT / "src" / "zroad" / "data" / "config.json").read_text(encoding="utf-8"))
 
 
-def _finished_engine(cards, config, seed=3, difficulty="easy"):
+def _finished_engine(cards, config, seed=8, difficulty="easy"):
     return play_full_game(cards, config, seed=seed, difficulty=difficulty)
 
 

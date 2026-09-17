@@ -81,7 +81,7 @@ def test_full_game_finishes_with_report(cards, config, seed):
 
 # ---------- 存档仓库 ----------
 def test_save_store_roundtrip(cards, config, tmp_path):
-    engine = play_full_game(cards, config, seed=11)
+    engine = play_full_game(cards, config, seed=8)
     store = SaveStore(save_dir=tmp_path)
     path = store.write(AUTO_SLOT, engine)
     assert path.exists()

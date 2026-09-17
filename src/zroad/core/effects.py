@@ -16,8 +16,7 @@ v0.6.1 起卡牌数据拆成两个字段：
 设计约束同 core 其它模块：普通 dict、无第三方、无 I/O、兼容 MicroPython。
 """
 
-import re
-
+from . import textparse as tp
 from .constants import (EVENT_NONE, EVENT_PREFIX, DICE_NORMAL, SPECIAL_ITEMS,
                         ITEM_SNIPER, ITEM_MAP, ITEM_BUS, ITEM_VEHICLE_ARMOR,
                         ITEM_GAS, ITEM_WOUND, ITEM_ZEALOT)
@@ -52,10 +51,8 @@ DECISION_CHOOSE_RESOURCE = "choose_resource"
 DECISION_PAY_GAS = "pay_gas"
 DECISION_ZEALOT_UPKEEP = "zealot_upkeep"
 
-# 开发者备注，如“（注：整套卡牌中一共有 2 张地图…）”，解析前整体剔除
-_NOTE_RE = re.compile(r"[（(]注[:：].*?[）)]")
-# 匹配「道具名」或（道具名）形式的道具提及
-_ITEM_BRACKET_RE = re.compile(r"[「（(](.+?)[」）)]")
+# 开发者备注（注：…）与括号道具名的提取统一走零依赖的 textparse，
+# 不使用正则，保证 CPython 与 MicroPython（ure 子集）行为一致。
 
 
 # ============================ 1. 解析 ============================
@@ -68,13 +65,12 @@ def _spec(kind, timing, **params):
 
 def _strip_notes(text):
     """剔除开发者备注（注：…），其余文本原样保留。"""
-    return _NOTE_RE.sub("", text)
+    return tp.strip_notes(text)
 
 
 def _find_item(text):
     """在文本中寻找被「」或（）括起来的已知特殊道具名，找到即返回规范名。"""
-    for match in _ITEM_BRACKET_RE.finditer(text):
-        name = match.group(1).strip()
+    for name in tp.iter_brackets(text):
         if name in SPECIAL_ITEMS:
             return name
     return None
@@ -86,8 +82,8 @@ def _gain_item_name(text):
     if item:
         return item
     tail = text.split("：", 1)[-1]
-    tail = re.split(r"[。（(]", tail, 1)[0].strip()
-    return tail
+    head, _ = tp.split_first(tail, "。（(")
+    return head.strip()
 
 
 def parse_effect(card):
@@ -123,10 +119,9 @@ def parse_effect(card):
     # 3) 道具条件触发句：先找出句中提到的道具，再按道具+关键词分支
     item = _find_item(text)
     if item == ITEM_MAP and "得分" in text:
-        score = 6
-        match = re.search(r"得分\+(\d+)", text)
-        if match:
-            score = int(match.group(1))
+        score = tp.int_after(text, "得分+")
+        if score is None:
+            score = 6
         return _spec(KIND_ITEM_MAP_SCORE, TIMING_IMMEDIATE,
                      item=ITEM_MAP, score=score)
     # II-5：获得“车辆铠甲”；只有与“校车”同时持有时，屍群才全用普通骰
@@ -135,10 +130,9 @@ def parse_effect(card):
         return _spec(KIND_ITEM_ARMOR, TIMING_IMMEDIATE,
                      item=ITEM_VEHICLE_ARMOR)
     if item == ITEM_SNIPER:
-        lose = 2
-        match = re.search(r"队伍人数-(\d+)", text)
-        if match:
-            lose = int(match.group(1))
+        lose = tp.int_after(text, "队伍人数-")
+        if lose is None:
+            lose = 2
         return _spec(KIND_ITEM_SNIPER_PASS, TIMING_IMMEDIATE,
                      item=ITEM_SNIPER, lose_if_missing=lose)
     if item == ITEM_WOUND:
@@ -147,10 +141,9 @@ def parse_effect(card):
         # 每持有 1 个毒气标记损失 1 人（标记不消耗，III-5/III-6 各自独立触发）
         return _spec(KIND_ITEM_GAS, TIMING_IMMEDIATE, item=ITEM_GAS, lose_per=1)
     if item == ITEM_ZEALOT and ("弹药" in text or "继续持有" in text):
-        ammo = 3
-        match = re.search(r"支付(\d+)个弹药", text)
-        if match:
-            ammo = int(match.group(1))
+        ammo = tp.int_after(text, "支付")
+        if ammo is None:
+            ammo = 3
         return _spec(KIND_ITEM_ZEALOT_UPKEEP, TIMING_IMMEDIATE,
                      item=ITEM_ZEALOT, ammo=ammo)
 
@@ -160,8 +153,9 @@ def parse_effect(card):
 
     # 5) 付汽油否则损人（II-7/III-3 付1；II-12/III-4 付2，每缺1损1）
     if "汽油" in text and "队伍人数-1" in text:
-        match = re.search(r"支付(\d+)个汽油", text)
-        required = int(match.group(1)) if match else 1
+        required = tp.int_after(text, "支付")
+        if required is None:
+            required = 1
         return _spec(KIND_PAY_GAS_OR_LOSE, TIMING_IMMEDIATE,
                      gas=required, lose_per_missing=1)
 
@@ -176,10 +170,10 @@ def parse_effect(card):
                      dice=DICE_NORMAL, save_faces=(3, 4, 5), lose=1)
 
     # 8) 队伍人数 ±N（放在付汽油等句式之后，避免误吞“不付汽油则队伍-1”）
-    match = re.search(r"队伍人数\s*([+-])\s*(\d+)", text)
-    if match:
-        amount = int(match.group(2))
-        if match.group(1) == "+":
+    signed = tp.signed_int_after(text, "队伍人数")
+    if signed:
+        sign, amount = signed
+        if sign == "+":
             return _spec(KIND_GAIN_SURVIVORS, TIMING_IMMEDIATE, amount=amount)
         return _spec(KIND_LOSE_SURVIVORS, TIMING_IMMEDIATE, amount=amount)
 
