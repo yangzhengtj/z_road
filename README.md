@@ -4,8 +4,8 @@
 
 ## 开发目标与范围
 
-- **阶段 1（当前，v0.7.1 已收官）**：Mac/Windows/Linux 终端单人 SOLO 版。Python + Rich 纯文字界面，支持存档/读档、简单/困难难度、分阶段局后统计（资源收支/骰面分布/对局回看）、历史最佳与评级；提供三平台免安装单文件与 pipx 安装。
-- **阶段 2**：移植到 M5Stack Cardputer ADV（MicroPython 设备前端，规则核心保持同一份可移植代码）。
+- **阶段 1（v0.7.1 已收官）**：Mac/Windows/Linux 终端单人 SOLO 版。Python + Rich 纯文字界面，支持存档/读档、简单/困难难度、分阶段局后统计（资源收支/骰面分布/对局回看）、历史最佳与评级；提供三平台免安装单文件与 pipx 安装。
+- **阶段 2（当前，v0.8.0）**：移植到 M5Stack Cardputer ADV（MicroPython v1.26.1，BeanpieChen Shell 固件）。同一套零依赖规则核心 + 全新设备前端（30×8 字符屏、自带点阵中文字库、microSD 存档），电脑端提供 ANSI 模拟器与脚本整局测试；拷卡即用。
 - **阶段 3**：两人同设备热座对战（移除竞拍，开局双方掷 D6 比大小定先手、平局重掷，之后每轮轮换先手）。
 - **明确不做**：3–4 人模式、联网对战、任何图片/图形渲染。
 
@@ -18,15 +18,15 @@
 - Linux：`zroad-vX-linux-x86_64`
 
 首次运行的安全提示绕过方式见《玩家使用指南》2.1 节。熟悉 Python 的玩家也可用
-`pipx install git+https://github.com/yangzhengtj/z_road.git` 安装（私有库需认证）。
+`pipx install git+https://github.com/yangzhengtj/z_road.git` 安装。
 
 ## 技术栈
 
-- **规则核心**：纯 Python，仅使用 MicroPython 兼容子集（零第三方依赖、不做 I/O），数据驱动——卡牌、骰子、规则常量全部 JSON 化。
-- **Mac/PC 前端**：CPython + Rich（界面复杂度上升后再评估 Textual）。
-- **设备前端**：MicroPython（阶段 2）。
-- **分发**：PyInstaller 单文件（`packaging/zroad.spec`）+ GitHub Actions 三平台矩阵（`.github/workflows/release.yml`，打 tag 即发布）。
-- **测试**：无头前端 + pytest 规则回归（当前 118 项全部通过）。
+- **规则核心**：纯 Python，仅使用 MicroPython 兼容子集（零第三方依赖、无 random/re/enum/dataclasses、不做 I/O），数据驱动——卡牌、骰子、规则常量全部 JSON 化；RNG 为 core 自带纯 Python MT19937，桌面与设备同一序列。
+- **Mac/PC 前端**：CPython + Rich。
+- **设备前端**：MicroPython（`src/zroad/platforms/device_mpy/`，逻辑字符屏 + 点阵字库 + dev.fb/TCA8418 适配；`sim.py` 为电脑端 ANSI 模拟器）。
+- **分发**：桌面端 PyInstaller 单文件（`packaging/zroad.spec`）+ GitHub Actions 三平台矩阵（`.github/workflows/release.yml`，打 tag 即发布）；Cardputer 用 `tools/build_mpy_bundle.py` 生成 microSD 卡包。
+- **测试**：无头前端 + pytest 规则回归 + 设备端脚本整局与缺字守门（当前 143 项全部通过）。
 
 ## 目录结构
 
@@ -85,7 +85,7 @@ pyinstaller packaging/zroad.spec --noconfirm --clean
 
 - `docs/开发任务规划.md`：**主文档**，含规则口径、分层架构、MicroPython 可移植规范、任务分解与版本记录，每次开发完成后更新。
 - `src/zroad/data/README.md`：数据层结构与再生成说明。
-- `docs/玩家使用指南.md`：安装（免安装/pipx/源码）、启动、操作与存档说明（v0.7.1 起）。
+- `docs/玩家使用指南.md`：安装（免安装/pipx/源码/Cardputer 拷卡）、启动、操作与存档说明（v0.8.0 起含掌机章节 §2.5）。
 
 ## 资料来源与版权声明
 
