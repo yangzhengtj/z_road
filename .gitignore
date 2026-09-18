@@ -32,3 +32,6 @@ saves/
 # ===== Office/WPS 打开文件时的临时锁文件 =====
 .~*
 ~$*
+
+# 本机固件模拟的产物目录（由 build_hw_sim.py 生成）
+tools/mpy_hw_sim/bundle/
