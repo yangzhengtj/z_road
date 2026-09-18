@@ -51,25 +51,77 @@ def build_stage_decks(catalog, rng, setup_config):
     """
     groups = group_cards_by_stage(catalog)
     pool_sizes = setup_config["stage_pool_sizes"]            # [16, 22, 22]
-    remove_n = setup_config["remove_per_stage"]              # 4
-    expected_active = setup_config["active_deck_sizes"]      # [12, 18, 18]
 
     active = {}
     removed = {}
     for offset, stage in enumerate(STAGE_ORDER):
-        pool = [card["id"] for card in groups[stage]]
-        # 防御性校验：数据数量与 config 声明一致，不一致直接报错（宁错勿乱）
-        if len(pool) != pool_sizes[offset]:
-            raise EngineError(
-                "阶段 %s 牌池数量 %d 与 config.stage_pool_sizes[%d]=%d 不一致"
-                % (stage, len(pool), offset, pool_sizes[offset]))
-        rng.shuffle(pool)  # 原地洗牌
-        removed[stage] = pool[:remove_n]
-        active[stage] = pool[remove_n:]
-        if len(active[stage]) != expected_active[offset]:
-            raise EngineError(
-                "阶段 %s 登场数量应为 %d，实为 %d"
-                % (stage, expected_active[offset], len(active[stage])))
+        active[stage], removed[stage] = build_one_stage_deck(
+            groups[stage], stage, offset, rng, setup_config,
+            expected_pool_size=pool_sizes[offset])
+    return active, removed
+
+
+def build_one_stage_deck(cards, stage, offset, rng, setup_config,
+                         expected_pool_size=None):
+    """单阶段洗牌剔除：返回 (active_ids, removed_ids)。
+
+    参数:
+        cards: 该阶段牌池的卡牌列表（顺序不限，内部按 order_in_stage 排序）；
+        stage: 阶段常量 1/2/3；
+        offset: 阶段在 STAGE_ORDER 中的下标（0/1/2），用于读 config 数组；
+        rng: SeededRng 实例；
+        setup_config: config["setup"]；
+        expected_pool_size: 期望牌池数量（None 时不校验，供分阶段懒加载）。
+
+    设备端内存小，需要逐阶段加载、洗牌、卸载时可直接调用本函数，
+    与 build_stage_decks 对同一阶段使用同一段随机序列，结果完全一致。
+    """
+    pool_sizes = setup_config["stage_pool_sizes"]
+    remove_n = setup_config["remove_per_stage"]              # 4
+    expected_active = setup_config["active_deck_sizes"]      # [12, 18, 18]
+
+    ordered = sorted(cards, key=lambda c: c["order_in_stage"])
+    pool = [card["id"] for card in ordered]
+    if expected_pool_size is not None and len(pool) != expected_pool_size:
+        raise EngineError(
+            "阶段 %s 牌池数量 %d 与 config.stage_pool_sizes[%d]=%d 不一致"
+            % (stage, len(pool), offset, expected_pool_size))
+    elif expected_pool_size is None and len(pool) != pool_sizes[offset]:
+        raise EngineError(
+            "阶段 %s 牌池数量 %d 与 config.stage_pool_sizes[%d]=%d 不一致"
+            % (stage, len(pool), offset, pool_sizes[offset]))
+    rng.shuffle(pool)  # 原地洗牌
+    removed = pool[:remove_n]
+    active = pool[remove_n:]
+    if len(active) != expected_active[offset]:
+        raise EngineError(
+            "阶段 %s 登场数量应为 %d，实为 %d"
+            % (stage, expected_active[offset], len(active)))
+    return active, removed
+
+
+def build_one_stage_deck_from_ids(pool_ids, stage, offset, rng,
+                                  setup_config):
+    """与 build_one_stage_deck 相同的洗牌剔除，但输入直接是 id 列表。
+
+    设备端内存小，建库时不解析卡牌正文，只按 id 洗牌（id 列表约 1KB），
+    正文留到对局中逐张懒加载。
+    """
+    pool_sizes = setup_config["stage_pool_sizes"]
+    remove_n = setup_config["remove_per_stage"]
+    expected_active = setup_config["active_deck_sizes"]
+    if len(pool_ids) != pool_sizes[offset]:
+        raise EngineError(
+            "阶段 %s 牌池数量 %d 与 config.stage_pool_sizes[%d]=%d 不一致"
+            % (stage, len(pool_ids), offset, pool_sizes[offset]))
+    pool = list(pool_ids)
+    rng.shuffle(pool)
+    removed = pool[:remove_n]
+    active = pool[remove_n:]
+    if len(active) != expected_active[offset]:
+        raise EngineError(
+            "阶段 %s 登场数量应为 %d，实为 %d"
+            % (stage, expected_active[offset], len(active)))
     return active, removed
 
 

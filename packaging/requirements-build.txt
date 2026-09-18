@@ -4,3 +4,6 @@ pyinstaller>=6.0
 rich>=13.0
 # Cardputer 点阵字库生成（tools/build_mpy_font.py，仅 v0.8.0 设备构建需要）
 pillow>=10.0
+# Cardputer 卡包预编译（tools/build_mpy_bundle.py）：版本必须与固件
+# MicroPython 版本一致（BeanpieChen v1.2 固件 = MicroPython v1.26.1）
+mpy-cross==1.26.1.post2

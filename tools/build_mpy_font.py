@@ -20,7 +20,14 @@
     .venv/bin/python tools/build_mpy_font.py --font /System/Library/Fonts/PingFang.ttc
 
 输出：
-    src/zroad/platforms/device_mpy/font_data.py（纯数据模块，设备与模拟器共用）
+    src/zroad/platforms/device_mpy/font_data.py
+        ASCII 点阵（很小，直接内联）+ CJK 字符索引表 + 按需读取器；
+    src/zroad/platforms/device_mpy/font.bin
+        CJK 字形裸数据（每字 32 字节，顺序与 CJK_TABLE 码点升序一致）。
+
+设备内存很小，34KB 的 CJK 点阵若内联进 .mpy，导入时一次性载入会触发
+MemoryError；因此 CJK 字形放卡上文件，按字符 seek 读取并只缓存最近 64 个
+（约 2KB）。模拟器（CPython）走同一套读取逻辑。
 
 依赖：Pillow（pip install pillow，仅构建期需要，不进设备）。
 字形 © Apple PingFang，仅在你自己的设备上随游戏个人使用，不分发字体文件本身。
@@ -37,6 +44,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DATA_DIR = ROOT / "src" / "zroad" / "data"
 DEVICE_DIR = ROOT / "src" / "zroad" / "platforms" / "device_mpy"
 OUTPUT = DEVICE_DIR / "font_data.py"
+FONT_BIN = DEVICE_DIR / "font.bin"
 
 FONT_HEIGHT = 16       # 行高 16px：135px 屏幕可显示 8 行
 ASCII_W = 8            # 半角字宽：一行 30 个半角字符
@@ -168,38 +176,91 @@ def main():
         '"""font_data.py —— Cardputer 端 16px 点阵字库（自动生成，请勿手改）。\n'
         '\n'
         '由 tools/build_mpy_font.py 扫描游戏数据与设备端源码的实际用字生成；\n'
-        '改动界面文案或卡牌文本后，重新运行该工具即可补字。\n'
-        'ASCII：%d×%d 每字 %d 字节；CJK：%d×%d 每字 %d 字节，行扫描 MSB 在左。\n'
+        '改动界面文案或卡牌文本后，重新运行该工具即可补字（font.bin 会一并重生成）。\n'
+        'ASCII：%d×%d 每字 %d 字节（内联在本文件）；CJK：%d×%d 每字 %d 字节，\n'
+        '点阵放在同目录 font.bin，由 cjk_glyph(index) 按需 seek 读取并做小缓存，\n'
+        '避免一次性载入几十 KB 导致设备 MemoryError。行扫描 MSB 在左。\n'
         '"""\n\n'
         "HEIGHT = %d\n"
         "ASCII_W = %d\n"
         "CJK_W = %d\n"
         "ASCII_FIRST = %d\n"
         "ASCII_COUNT = %d\n"
-        "CJK_COUNT = %d\n\n"
+        "CJK_COUNT = %d\n"
+        "CJK_GLYPH_BYTES = %d\n\n"
     ) % (ASCII_W, FONT_HEIGHT, ASCII_W, CJK_W, FONT_HEIGHT, CJK_W // 2 * 4,
          FONT_HEIGHT, ASCII_W, CJK_W, ASCII_FIRST,
-         ASCII_LAST - ASCII_FIRST + 1, len(cjk_chars))
+         ASCII_LAST - ASCII_FIRST + 1, len(cjk_chars), CJK_W * FONT_HEIGHT // 8)
 
     body = []
     body.append("ASCII_DATA = (\n" + b64ish_lines(bytes(ascii_data), 16)
                 + "\n)\n")
-    # CJK_CHARS 直接放字符串；MicroPython 的 str.find 可用
-    body.append("CJK_CHARS = (\n")
-    for i in range(0, len(cjk_chars), 40):
-        body.append("    '" + "".join(cjk_chars[i:i + 40]).replace("'", "\\'")
-                    + "'\n")
-    body.append(")\n")
-    body.append("CJK_DATA = (\n" + b64ish_lines(bytes(cjk_data), 32) + "\n)\n")
+    # 码点表：按码点升序排列（与 font.bin 顺序一致），每个码点 2 字节
+    # 大端。设备端用二分查找定位字形下标，全程零分配；不能用 str.find：
+    # MicroPython 对双字节中文字符串的查找会申请约 1.3KB 临时缓冲，
+    # 在碎片化小堆上会直接 MemoryError。
+    table = bytearray()
+    for ch in cjk_chars:
+        code = ord(ch)
+        table.append((code >> 8) & 0xFF)
+        table.append(code & 0xFF)
+    body.append("# 字形码点表（大端 uint16，升序，下标即 font.bin 中的字形序号）\n")
+    body.append("CJK_TABLE = (\n" + b64ish_lines(bytes(table), 32) + "\n)\n")
+    # CJK 点阵按需读取器（MicroPython / CPython 通用，不依赖第三方库）：
+    # 单个复用缓冲，零缓存、零运行期分配，避免缓存小块把堆插碎。
+    body.append(
+        "_bin = None\n"
+        "_scratch = bytearray(CJK_GLYPH_BYTES)\n\n\n"
+        "def open_bin():\n"
+        '    """提前打开 font.bin（开局建界面之前调用，文件对象落在整齐堆）。"""\n'
+        "    global _bin\n"
+        "    if _bin is None:\n"
+        "        if '/' in __file__:\n"
+        "            directory = __file__.rsplit('/', 1)[0]\n"
+        "        else:\n"
+        "            directory = __file__.rsplit('\\\\', 1)[0]\n"
+        "        _bin = open(directory + '/font.bin', 'rb')\n"
+        "    return _bin\n\n\n"
+        "def cjk_index(code):\n"
+        '    """按整数码点二分查找字形序号；字库中没有返回 -1（零分配）。"""\n'
+        "    lo, hi = 0, CJK_COUNT - 1\n"
+        "    while lo <= hi:\n"
+        "        mid = (lo + hi) >> 1\n"
+        "        j = mid * 2\n"
+        "        value = (CJK_TABLE[j] << 8) | CJK_TABLE[j + 1]\n"
+        "        if value == code:\n"
+        "            return mid\n"
+        "        if value < code:\n"
+        "            lo = mid + 1\n"
+        "        else:\n"
+        "            hi = mid - 1\n"
+        "    return -1\n\n\n"
+        "def warm(text):\n"
+        '    """兼容旧调用：字形即读即用，预热只需确保字库文件已打开。"""\n'
+        "    open_bin()\n\n\n"
+        "def cjk_glyph(index):\n"
+        '    """把第 index 个 CJK 字形读进复用缓冲并返回（32 字节，MSB 在左）。\n'
+        "\n"
+        "    返回的是共享缓冲，每次调用覆盖上次内容，调用方必须当场用完，\n"
+        "    不得长期持有引用（draw_cells 逐字绘制，满足该约定）。\n"
+        '    """\n'
+        "    data_file = open_bin()\n"
+        "    data_file.seek(index * CJK_GLYPH_BYTES)\n"
+        "    data_file.readinto(_scratch)\n"
+        "    return _scratch\n"
+    )
 
     DEVICE_DIR.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(header + "\n".join(body), encoding="utf-8")
+    FONT_BIN.write_bytes(bytes(cjk_data))
 
-    print("ASCII 字形 %d 个（%d 字节）" %
+    print("ASCII 字形 %d 个（%d 字节，内联）" %
           (ASCII_LAST - ASCII_FIRST + 1, len(ascii_data)))
-    print("CJK 字形 %d 个（%d 字节）" % (len(cjk_chars), len(cjk_data)))
-    print("输出：%s（%.1f KB）" %
-          (OUTPUT, OUTPUT.stat().st_size / 1024))
+    print("CJK 字形 %d 个（%d 字节 → %s）" %
+          (len(cjk_chars), len(cjk_data), FONT_BIN.name))
+    print("输出：%s（%.1f KB）+ %s（%.1f KB）" %
+          (OUTPUT, OUTPUT.stat().st_size / 1024,
+           FONT_BIN.name, FONT_BIN.stat().st_size / 1024))
     if missing:
         print("警告：以下字符字体缺字（显示为空白）：%s" % " ".join(missing),
               file=sys.stderr)

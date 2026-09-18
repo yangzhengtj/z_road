@@ -9,6 +9,8 @@
     时可能为空字符串，不影响读档）。
 """
 
+import gc
+
 AUTO_SLOT = "auto"
 MANUAL_SLOTS = ("manual_1", "manual_2", "manual_3")
 SLOT_LABELS = {"auto": "自动存档", "manual_1": "手动槽 1",
@@ -58,12 +60,55 @@ class JsonFileStore(object):
         with open(path, "w") as f:
             f.write(self.json.dumps(obj))
 
+    def _stream_json(self, f, obj):
+        """把 JSON 结构直接分小块写入文件，不构造整份大字符串。
+
+        无 PSRAM 的设备堆碎片严重，整份存档 ujson.dumps 可能需要
+        几 KB 的连续块而失败；递归逐 token 写，每次只分配很小的字符串。
+        """
+        dumps = self.json.dumps
+        kind = type(obj)
+        if kind is dict:
+            f.write("{")
+            first = True
+            for key, value in obj.items():
+                if not first:
+                    f.write(",")
+                first = False
+                f.write(dumps(str(key)))
+                f.write(":")
+                self._stream_json(f, value)
+            f.write("}")
+        elif kind is list or kind is tuple:
+            f.write("[")
+            first = True
+            for value in obj:
+                if not first:
+                    f.write(",")
+                first = False
+                self._stream_json(f, value)
+            f.write("]")
+        elif obj is None:
+            f.write("null")
+        elif obj is True:
+            f.write("true")
+        elif obj is False:
+            f.write("false")
+        elif kind is str:
+            f.write(dumps(obj))
+        else:
+            # int / float
+            f.write(dumps(obj))
+
     # ---------------- 存档 ----------------
 
     def exists(self, slot):
         return self._exists(self._path(slot))
 
     def write(self, slot, engine):
+        # 写存档要临时生成随机状态 hex（约 5KB）和整份 JSON 字符串，
+        # 小内存设备上先回收一轮，尽量腾出连续空间。
+        gc.collect()
         payload = {
             "format": "zroad-save",
             "format_version": 1,
@@ -71,8 +116,14 @@ class JsonFileStore(object):
             "saved_at": self.now(),
             "state": engine.snapshot(),
         }
-        self._write_json(self._path(slot), payload)
-        return self._path(slot)
+        gc.collect()
+        # 流式写 JSON，避免整份存档字符串的大块连续分配
+        path = self._path(slot)
+        with open(path, "w") as f:
+            self._stream_json(f, payload)
+        del payload
+        gc.collect()
+        return path
 
     def read(self, slot):
         return self._read_json(self._path(slot))["state"]

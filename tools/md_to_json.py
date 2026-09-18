@@ -135,6 +135,11 @@ def main():
     with open(os.path.join(OUT_DIR, "dice.json"), "w", encoding="utf-8") as f:
         json.dump(dice, f, ensure_ascii=False, indent=2)
 
+    # 设备端按阶段懒加载（Cardputer 无 PSRAM），同步生成 JSONL 拆分文件
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from split_cards import main as split_main
+    split_main()
+
     stage_counts = {1: 0, 2: 0, 3: 0}
     for card in cards:
         stage_counts[card["stage"]] += 1

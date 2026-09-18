@@ -98,7 +98,7 @@ def test_full_game_easy_no_missing_glyphs(tmp_save_root):
     assert state["menu_seen"] == 2
     # 缺字守门：整局任何一屏都不能出现字库未收录的汉字
     assert driver.missing == set(), "存在缺字：%s" % "".join(
-        sorted(driver.missing))
+        chr(code) for code in sorted(driver.missing))
     # 自动存档落盘（终局也会写一次 auto）
     assert platform.store.exists(AUTO_SLOT)
     final_state = platform.store.read(AUTO_SLOT)
@@ -176,7 +176,7 @@ def test_font_covers_every_data_and_ui_char():
     for ch in chars:
         if ord(ch) < 0x80 or ch in ("\n", "\r", "\t", " "):
             continue
-        _, data = screen_mod.glyph(ch)
+        _, data, _off = screen_mod.glyph(ord(ch))
         if data is None:
             missing.add(ch)
     assert not missing, "字库缺少字形：%s" % " ".join(

@@ -22,8 +22,8 @@ from .model import GameState, PlayerState, Resources, EngineError
 from . import deck as deck_mod
 from . import effects as effects_mod
 from . import combat as combat_mod
-from . import scoring as scoring_mod
-from . import statistics as statistics_mod
+# scoring / statistics 只在终局使用，设备端内存小，改为方法内懒加载，
+# 避免对局全程常驻两份模块字节码。
 from .combat import Combat
 
 
@@ -81,17 +81,26 @@ class Engine:
 
     # ---------- 建局 / 读档 ----------
     @classmethod
-    def new_solo(cls, cards, config, seed=None, ui=None, difficulty=None):
+    def new_solo(cls, cards, config, seed=None, ui=None, difficulty=None,
+                 prebuilt_decks=None, rng=None):
         """创建并开始一局单人游戏，返回处于第一轮 planning 的引擎。
 
         参数:
             cards: cards.json 的列表（也兼容 {id:card}）；
             seed: 随机种子，传入整数可复现整局；None 为真随机；
             difficulty: 难度键 "easy"/"hard"，None 时取
-                config.solo_paths.default_difficulty（再缺省为简单）。
+                config.solo_paths.default_difficulty（再缺省为简单）；
+            prebuilt_decks: 可选 (active, removed)。设备端内存小、需要分
+                阶段懒加载卡牌时，可先用同一 seed 的 SeededRng 逐阶段构建
+                牌库后传入；传入后跳过整体构建（随机序列与默认路径一致）；
+            rng: 可选已播种的 SeededRng。设备端在堆还整齐时就预建 rng，
+                且与 prebuilt_decks 用的是同一个实例，传入后既不重新分配
+                状态数组，也不需要重放洗牌。
         """
         catalog = cards if isinstance(cards, dict) else {c["id"]: c for c in cards}
-        rng = SeededRng(seed)
+        rng_provided = rng is not None
+        if rng is None:
+            rng = SeededRng(seed)
         difficulty = cls._resolve_difficulty(config, difficulty)
         state = GameState(mode=MODE_SOLO, seed=seed, difficulty=difficulty)
 
@@ -103,29 +112,63 @@ class Engine:
             resources=Resources(init_cfg["ammo"], init_cfg["gas"], init_cfg["meds"]))
 
         # 分阶段洗牌、剔除 4 张，得到登场牌库
-        active, removed = deck_mod.build_stage_decks(catalog, rng, config["setup"])
+        if prebuilt_decks is None:
+            active, removed = deck_mod.build_stage_decks(
+                catalog, rng, config["setup"])
+        else:
+            active, removed = prebuilt_decks[0], prebuilt_decks[1]
+            if len(prebuilt_decks) >= 3 and prebuilt_decks[2] is not None:
+                # 调用方直接给出了洗牌后的 rng 状态
+                rng.set_state(prebuilt_decks[2])
+            elif rng_provided:
+                # 传入的 rng 就是构建牌库用的同一个实例，已在正确位置
+                pass
+            else:
+                # 设备端已用同种子的独立 rng 完成洗牌，但不保留状态快照
+                # （MT 状态约 18KB，小内存设备常驻不起）。这里用同样大小的
+                # 哑牌堆把 rng 推进到完全相同的位置：洗牌只消费 rng，
+                # 不依赖牌面内容，所以后续骰子序列与默认路径严格一致。
+                setup_cfg = config["setup"]
+                for offset, stage in enumerate(deck_mod.STAGE_ORDER):
+                    dummy = list(range(setup_cfg["stage_pool_sizes"][offset]))
+                    rng.shuffle(dummy)
         state.stage_decks = active
         state.removed_cards = removed
-        state.rng_state = rng.get_state()
+        # 随机状态不常驻 GameState（设备端内存紧张）；只在 snapshot()
+        # 真正写存档时临时生成。
+        state.rng_state = None
 
         engine = cls(catalog, config, state, rng, ui)
         engine.start_round()
         return engine
 
     @classmethod
-    def restore(cls, cards, config, state_dict, ui=None):
-        """从 GameState.to_dict() 的存档恢复一局，随机序列无缝延续。"""
+    def restore(cls, cards, config, state_dict, ui=None, rng=None,
+                state_obj=None):
+        """从 GameState.to_dict() 的存档恢复一局，随机序列无缝延续。
+
+        rng 可传入预分配实例（设备端复用，避免堆碎片后再分配状态数组）。
+        state_obj 可传入已反序列化好的 GameState（设备端 catalog 已借用
+        其中的牌库列表，传同一对象可避免牌库 id 列表在堆里存两份）。
+        """
         catalog = cards if isinstance(cards, dict) else {c["id"]: c for c in cards}
-        state = GameState.from_dict(state_dict)
-        rng = SeededRng(seed=state.seed)
+        state = state_obj if state_obj is not None \
+            else GameState.from_dict(state_dict)
+        if rng is None:
+            rng = SeededRng(seed=state.seed)
+        else:
+            rng.reseed(state.seed)
         if state.rng_state is not None:
             rng.set_state(state.rng_state)
+        # 恢复后随机状态只活在 rng 实例里，不常驻 GameState
+        state.rng_state = None
         return cls(catalog, config, state, rng, ui)
 
     def snapshot(self):
-        """导出整局存档 dict（= GameState.to_dict，且同步最新随机状态）。"""
-        self.state.rng_state = self.rng.get_state()
-        return self.state.to_dict()
+        """导出整局存档 dict：随机状态在此时临时生成，不常驻内存。"""
+        data = self.state.to_dict()
+        data["rng_state"] = self.rng.get_state()
+        return data
 
     # ---------- 轮次推进 ----------
     def current_stage(self):
@@ -500,6 +543,7 @@ class Engine:
 
     def final_report(self):
         """终局分数明细与评级（仅在 finished 时有意义）。"""
+        from . import scoring as scoring_mod
         return scoring_mod.final_report(self.state.player, self.catalog,
                                         self.config["scoring"])
 
@@ -508,6 +552,7 @@ class Engine:
 
         用 config 里的开局资源做账面恒等式校验（终局=初始+获得-支出）。
         """
+        from . import statistics as statistics_mod
         init_cfg = self.setup_cfg["initial_state"]
         initial = Resources(init_cfg["ammo"], init_cfg["gas"], init_cfg["meds"])
         return statistics_mod.summarize(self.state, self.catalog,
@@ -524,5 +569,10 @@ class Engine:
 
     # ---------- 内部 ----------
     def _sync_rng(self):
-        """把最新随机状态写回 state，使任何时刻 snapshot 都能无损续局。"""
-        self.state.rng_state = self.rng.get_state()
+        """随机状态同步钩子（历史调用点保留）。
+
+        随机状态现在只在 snapshot() 写存档时临时生成（设备端内存紧张，
+        MT 状态不常驻 GameState）；运行期状态始终在 self.rng 实例里，
+        所以这里无需做任何事。
+        """
+        return

@@ -76,6 +76,14 @@ class SimDriver(object):
             lines.append("".join(chunks))
         return lines
 
+    def clear_screen(self, color):
+        # ANSI 渲染每帧整体重绘，清屏无需操作
+        pass
+
+    def draw_cells(self, screen):
+        # ANSI 文本由 present() 从 chars 数组重建，无需像素级绘制
+        pass
+
     def fill_rect(self, x, y, w, h, color):
         pass
 
@@ -162,6 +170,15 @@ class SimPlatform(object):
         with open(os.path.join(self.data_dir, name), "r",
                   encoding="utf-8") as f:
             return json.load(f)
+
+    def data_path(self, name):
+        """返回数据文件路径（StageCatalog 逐行读取 JSONL 用）。"""
+        return os.path.join(self.data_dir, name)
+
+    def json_loads(self, text):
+        # 与真机一致走低碎片解析器，让桌面模拟能覆盖设备端解析路径。
+        from . import microjson
+        return microjson.loads(text)
 
     def exit(self):
         raise SystemExit(0)

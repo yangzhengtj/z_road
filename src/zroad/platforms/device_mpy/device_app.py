@@ -9,15 +9,20 @@ Platform 对象注入。mp_frontend.py 注入真机实现，sim.py 注入电脑�
 因此整套对局流程可以在 Mac 上自动化测试。
 """
 
+import gc
+
 from .screen import (Screen, COLS, ROWS, BLACK, WHITE, RED, GREEN, YELLOW,
                      CYAN, MAGENTA, GRAY, BLUE, DARK_GREEN, wrap_text)
 from .stores import JsonFileStore, AUTO_SLOT, MANUAL_SLOTS, SLOT_LABELS
+from .card_catalog import StageCatalog
+from . import font_data
 from ...core.engine import Engine
+from ...core.model import GameState
 from ...core import effects as fx
 from ...core.constants import NORMAL_FACE_NAMES, RESOURCE_KEYS, ITEM_BUS, \
     ITEM_VEHICLE_ARMOR
 
-VERSION = "v0.8.0"
+VERSION = "v0.8.1"
 
 RES_FULL = {"ammo": "弹药", "gas": "汽油", "meds": "药剂"}
 RES_SHORT = {"ammo": "弹", "gas": "油", "meds": "药"}
@@ -41,6 +46,14 @@ HELP_LINES = [
     "      选 1 条路、弃 4 张；校车+车辆铠甲同时持有",
     "      时，屍群强化骰才全部降级为普通骰。",
 ]
+
+
+from ...core.rng import SeededRng
+
+# 工作随机源在模块导入期就分配：此刻堆刚由解释器/模块顺序占用、
+# 连续块最大，2.5KB 状态数组一定能分到；之后无论新局还是读档都复用
+# 这一个实例（reseed/set_state 原地复用数组），运行期不再申请大块。
+_WORK_RNG = SeededRng(0)
 
 
 class ReturnToMenu(Exception):
@@ -67,13 +80,26 @@ class DeviceUI(object):
 
     def _flatten(self, lines):
         """把 str 或 (文本,颜色) 的行列表折行成 (文本,颜色) 平面行。"""
+        gc.collect()   # 折行会产生一批短命字符串，先回收腾连续块
         flat = []
         for item in lines:
             if isinstance(item, tuple):
                 text, color = item
             else:
                 text, color = item, WHITE
-            for wrapped in wrap_text(text, COLS):
+            try:
+                wrapped_lines = wrap_text(text, COLS)
+            except MemoryError:
+                # 碎片化极端情况下折行中途失败：再回收一次后重试；
+                # 仍失败则退化为“不折行、超长裁剪”，保证界面还能出来。
+                gc.collect()
+                try:
+                    probe = bytearray(1280)
+                    del probe
+                    wrapped_lines = wrap_text(text, COLS)
+                except MemoryError:
+                    wrapped_lines = [text[:COLS]]
+            for wrapped in wrapped_lines:
                 flat.append((wrapped, color))
         return flat
 
@@ -193,10 +219,32 @@ class DeviceApp(object):
 
     def __init__(self, platform):
         self.p = platform
+        # 随机源在模块导入期就预分配（见模块末尾的 _WORK_RNG）：那时堆
+        # 还很整齐，2.5KB 连续状态块一定能分到；新局/读档都复用这一个
+        # 实例（reseed/set_state 原地复用数组，运行期不再申请大块）。
+        self.work_rng = _WORK_RNG
         self.ui = DeviceUI(platform.driver, platform.get_key)
-        self.cards = platform.load_json("cards.json")
+        # 然后打开字库文件并预热常用汉字的点阵缓存：让文件对象和缓存
+        # 槽位也分配在界面帧产生碎片之前，避免游戏中途连 32 字节都分不出。
+        font_data.open_bin()
+        font_data.warm("末路求生文字版新游戏读取存档退出选择难度简单困难"
+                       "第轮阶段幸存者弹油药人得分道具路径左右卡遭遇丧尸战斗")
+        gc.collect()
+        # 配置与卡牌目录。迷你卡（60 张，约 10KB）刻意在“任何界面帧
+        # 渲染之前”就预载完成：此时堆最整齐，常驻对象从底部连续排开，
+        # 顶部能保留一大块连续空间。若拖到开局菜单之后再建，dict/字符串
+        # 会落进界面帧回收后的碎片空洞，MicroPython 的 GC 不压缩堆，
+        # 游戏中途最大连续块会被切碎到 1KB 以下而 MemoryError。
         self.config = platform.load_json("config.json")
-        self.catalog = {c["id"]: c for c in self.cards}
+        self.catalog = StageCatalog(platform, self.config)
+        # 开机只预载阶段 I 迷你卡（16 张）；阶段 II/III 在切换时载、
+        # 旧阶段在切换时释放，把常驻迷你卡压到最小（见 card_catalog）。
+        self.catalog.preload_stage_minis(1)
+        # 终局才用的两个模块也在开机时导入：代码对象同样是常驻内存，
+        # 趁堆整齐一次性放好，避免终局时碎片堆里连模块都加载失败。
+        from ...core import scoring as _scoring  # noqa: F401
+        from ...core import statistics as _statistics  # noqa: F401
+        gc.collect()
         self.total_rounds = self.config["setup"]["total_rounds"]
         self.store = platform.store
 
@@ -283,9 +331,18 @@ class DeviceApp(object):
         difficulty = "easy" if diff == "e" else "hard"
         seed = self.ui.ask_int(
             "新游戏", "随机种子（直接回车=随机）", 0, 9999999999, 0)
-        engine = Engine.new_solo(self.cards, self.config,
-                                 seed=None if seed is None or seed == 0 else seed,
-                                 difficulty=difficulty)
+        actual_seed = None if seed is None or seed == 0 else seed
+        # 迷你卡开机时已预载，这里复用同一个目录实例（第二局也不重建），
+        # 只重新洗牌 id。
+        catalog = self.catalog
+        self.work_rng.reseed(actual_seed)
+        catalog.setup_new(self.work_rng)
+        gc.collect()
+        engine = Engine.new_solo(
+            catalog, self.config, seed=actual_seed,
+            difficulty=difficulty,
+            prebuilt_decks=(catalog.active, catalog.removed),
+            rng=self.work_rng)
         self.play(engine)
 
     def load_menu(self):
@@ -309,21 +366,52 @@ class DeviceApp(object):
             self.load_slot(slot_by_key[choice])
 
     def load_slot(self, slot):
-        state = self.store.read(slot)
-        engine = Engine.restore(self.cards, self.config, state)
+        state_dict = self.store.read(slot)
+        catalog = self.catalog   # 迷你卡开机已预载，复用同一目录实例
+        # catalog 需要 GameState 对象（取 stage_decks/removed_cards），
+        # Engine.restore 接收原始 dict 自行反序列化，两者各取所需。
+        state_obj = GameState.from_dict(state_dict)
+        catalog.setup_restore(state_obj)
+        # 传入同一个 state_obj：catalog 已借用其中的牌库列表，避免
+        # Engine 再反序列化一份导致牌库 id 列表在堆里存两份。
+        engine = Engine.restore(catalog, self.config, state_dict,
+                                rng=self.work_rng, state_obj=state_obj)
+        # play() 在本函数栈帧内执行，局部变量会一直占着堆：存档原始
+        # dict（含 rng 回放序列，整局可达数 KB）必须先释放；state_obj
+        # 已由 engine 持有，牌库列表由 catalog/engine 共享引用。
+        del state_dict
+        gc.collect()
         self.play(engine)
 
     # ---------- 对局主循环 ----------
 
     def play(self, engine):
+        # scoring/statistics 已在 DeviceApp.__init__ 提前导入（代码对象
+        # 也是常驻内存，必须在界面帧产生碎片之前放好）。
         while not engine.is_finished():
+            # 每个阶段步开始前回收一次：引擎在本步分配的常驻对象
+            # （统计、战斗记录、PathOption 等）要尽量落在干净堆上，
+            # 不要插进上一屏界面帧的短命对象之间造成碎片。
+            gc.collect()
+            # 每轮确保只把当前阶段的卡牌留在内存里（StageCatalog 才有此方法）
+            catalog = engine.catalog
+            if hasattr(catalog, "ensure_stage"):
+                catalog.ensure_stage(engine.current_stage(),
+                                     engine.state.player.won_card_ids)
             phase = engine.state.phase
+            # 阶段工作开始前释放连续储备块：本阶段的完整卡解析、长文本
+            # 折行等较大短命分配使用这块连续内存；阶段结束再占回来。
+            catalog.release_reserve()
             if phase == "planning":
                 self.do_planning(engine)
             elif phase == "encounter":
                 self.do_encounter(engine)
             elif phase == "round_end":
                 self.do_round_end(engine)
+            # 储备块释放后不再尝试占回：GC 不压缩，阶段结束时已分不出
+            # 等大的连续块；各阶段大分配点另有 gc 重试兜底。
+            catalog._reserve = None
+        catalog.release_reserve()
         self.show_final(engine)
 
     # ---------- 规划选路 ----------
@@ -404,6 +492,10 @@ class DeviceApp(object):
             dist = self._ask_distribution(option.cost, engine.state.player,
                                           paying=True)
         engine.choose_path(path_index, dist)
+        # 规划阶段为看明牌升级过的完整卡，选路后立即全部降级：
+        # 接下来遭遇时会按需逐张升级，控制完整卡同时驻留的数量。
+        if hasattr(self.catalog, "release_stage_full"):
+            self.catalog.release_stage_full(engine.current_stage())
 
     def _inspect_path_card(self, options, path_index, position):
         option = None
@@ -501,6 +593,10 @@ class DeviceApp(object):
             for line in effect["logs"]:
                 messages.append(("事件：" + line, YELLOW))
         if outcome.get("combat"):
+            # 战斗挂起信息已独立保存在引擎里，战斗过程不再需要卡面，
+            # 先把完整卡降级，给战斗中的骰面/菜单文本腾出内存。
+            if hasattr(self.catalog, "release_card"):
+                self.catalog.release_card(card_id)
             self.do_combat(engine)
         if engine.state.player.is_eliminated():
             return
@@ -509,6 +605,9 @@ class DeviceApp(object):
         else:
             # 无战斗也无文字收益时给一个短暂停顿，保持节奏一致
             self.ui.message("结算", ["（这张卡没有额外结算内容）"])
+        # 本卡遭遇流程全部结束，卡面不再需要，立即降回迷你卡
+        if hasattr(self.catalog, "release_card"):
+            self.catalog.release_card(card_id)
 
     # ---------- 战斗 ----------
 
@@ -749,7 +848,16 @@ class DeviceApp(object):
                 ("q", "保存并退回主菜单", True),
             ], title_color=DARK_GREEN)
             if choice == "c":
+                prev_stage = engine.current_stage()
                 engine.close_round()
+                # 同阶段相邻两轮：把上一轮摸过的完整卡降回迷你卡，
+                # 使内存中完整卡始终不超过桌上的 6 张（跨阶段由
+                # play() 循环开头的 ensure_stage 处理）。
+                catalog = engine.catalog
+                if hasattr(catalog, "release_stage_full") and \
+                        engine.current_stage() == prev_stage and \
+                        prev_stage is not None:
+                    catalog.release_stage_full(prev_stage)
                 return
             if choice == "q":
                 raise ReturnToMenu()
@@ -775,6 +883,17 @@ class DeviceApp(object):
     # ---------- 终局 ----------
 
     def show_final(self, engine):
+        # 终局不再需要任何完整卡面，先全部降级；迷你卡也只保留玩家赢取
+        # 的卡（计分/回看只访问它们），把当前阶段 22 张迷你卡的常驻
+        # 内存让给结算文本、统计与终局存档序列化。
+        if hasattr(self.catalog, "release_stage_full"):
+            won_ids = engine.state.player.won_card_ids
+            for stage in (1, 2, 3):
+                if hasattr(self.catalog, "release_stage_minis"):
+                    self.catalog.release_stage_minis(stage, won_ids)
+                else:
+                    self.catalog.release_stage_full(stage)
+        gc.collect()
         report = engine.final_report()
         summary = engine.statistics_summary()
         lines = []
